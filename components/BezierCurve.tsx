@@ -112,7 +112,7 @@ export const BezierCurve: React.FC<BezierCurveProps> = ({ points, onPointDown })
                 <Line 
                     key={`cl-${i}`} 
                     points={pts} 
-                    color="#444" 
+                    color="#00ffff" 
                     lineWidth={0.5} 
                     depthTest={false} 
                     transparent 
