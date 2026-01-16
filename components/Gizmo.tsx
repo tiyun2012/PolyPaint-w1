@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { GizmoRenderer, GizmoHoverAxis } from '../services/GizmoRenderer';
-import { Vec3Utils, RayUtils, Vec3, Mat4Utils } from '../services/math';
+import { GizmoRenderer, GizmoHoverAxis, GizmoMode } from '../services/GizmoRenderer';
+import { Vec3Utils, RayUtils, Vec3, Mat4Utils, QuatUtils, MathUtils } from '../services/math';
 
 interface GizmoProps {
   target?: THREE.Object3D | null;
@@ -11,7 +11,8 @@ interface GizmoProps {
   onDragStart?: () => void;
   onDragEnd?: () => void;
   onDrag?: () => void;
-  mode?: 'translate' | 'scale' | 'rotate';
+  mode?: GizmoMode;
+  onModeChange?: (mode: GizmoMode) => void;
 }
 
 export const Gizmo: React.FC<GizmoProps> = ({ 
@@ -21,7 +22,8 @@ export const Gizmo: React.FC<GizmoProps> = ({
   onDragStart, 
   onDragEnd, 
   onDrag, 
-  mode = 'translate' 
+  mode = 'translate',
+  onModeChange
 }) => {
   const { gl, camera, raycaster } = useThree();
   const rendererRef = useRef<GizmoRenderer | null>(null);
@@ -33,6 +35,8 @@ export const Gizmo: React.FC<GizmoProps> = ({
   // Drag State
   const dragStartPoint = useRef<Vec3>({x:0, y:0, z:0});
   const dragStartTargetPos = useRef<Vec3>({x:0, y:0, z:0});
+  const dragStartTargetRot = useRef<THREE.Quaternion>(new THREE.Quaternion());
+  const dragStartAngle = useRef<number>(0);
   
   // Cache for rotation matrix to pass to renderer (Float32Array)
   const rotationMatrixRef = useRef<Float32Array>(new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]));
@@ -91,9 +95,37 @@ export const Gizmo: React.FC<GizmoProps> = ({
   };
 
   const getPlaneNormal = (axis: string, rot: THREE.Quaternion): Vec3 => {
+      // For translation planes
       if (axis === 'XY') return applyRotation({x:0, y:0, z:1}, rot);
       if (axis === 'XZ') return applyRotation({x:0, y:1, z:0}, rot);
-      return applyRotation({x:1, y:0, z:0}, rot); // YZ
+      if (axis === 'YZ') return applyRotation({x:1, y:0, z:0}, rot);
+
+      // For rotation rings: The normal is the axis itself
+      if (axis === 'X') return applyRotation({x:1, y:0, z:0}, rot); // Ring in YZ plane
+      if (axis === 'Y') return applyRotation({x:0, y:1, z:0}, rot); // Ring in XZ plane
+      if (axis === 'Z') return applyRotation({x:0, y:0, z:1}, rot); // Ring in XY plane
+      
+      return {x:0,y:1,z:0};
+  };
+
+  const getRotationAngle = (hitPoint: Vec3, center: Vec3, axis: string, rot: THREE.Quaternion): number => {
+      const localP = new THREE.Vector3(hitPoint.x, hitPoint.y, hitPoint.z).sub(new THREE.Vector3(center.x, center.y, center.z));
+      
+      // Project into local space of the ring
+      // We need to un-rotate the point by the gizmo rotation
+      localP.applyQuaternion(rot.clone().invert());
+
+      if (axis === 'X') {
+          // Ring on YZ plane. Angle is atan2(z, y)
+          return Math.atan2(localP.z, localP.y);
+      } else if (axis === 'Y') {
+          // Ring on XZ plane. Angle is atan2(x, z) ? 
+          // Default Y rotation: +Z -> +X. 
+          return Math.atan2(localP.x, localP.z);
+      } else {
+          // Z axis. Ring on XY. Angle is atan2(y, x)
+          return Math.atan2(localP.y, localP.x);
+      }
   };
 
   // Handle Pointer Events
@@ -105,6 +137,15 @@ export const Gizmo: React.FC<GizmoProps> = ({
               e.stopPropagation();
               e.preventDefault();
               canvas.setPointerCapture(e.pointerId);
+              
+              if (hoverAxis === 'SWITCH') {
+                  // Toggle Mode
+                  if (onModeChange) {
+                      onModeChange(mode === 'translate' ? 'rotate' : 'translate');
+                  }
+                  return; // Don't start drag
+              }
+
               setActiveAxis(hoverAxis);
               onDragStart?.();
               
@@ -114,35 +155,49 @@ export const Gizmo: React.FC<GizmoProps> = ({
               const rayOrigin = { x: raycaster.ray.origin.x, y: raycaster.ray.origin.y, z: raycaster.ray.origin.z };
               
               Vec3Utils.copy(dragStartTargetPos.current, pos);
+              dragStartTargetRot.current.copy(rot);
 
-              // Setup drag start points based on axis
-              if (hoverAxis.length === 1) { // X, Y, Z (Lines)
-                 const axisDir = getAxisDir(hoverAxis, rot);
-                 const closest = RayUtils.closestPointsRayRay(rayOrigin, rayDir, pos, axisDir);
-                 if (closest) {
-                     // Store the distance along the axis as the start value
-                     dragStartPoint.current = { x: closest.t2, y: 0, z: 0 }; // We overload x to store t value
-                 }
-              } else if (hoverAxis.length === 2) { // Plane
-                  const planeNormal = getPlaneNormal(hoverAxis, rot);
-                  const t = RayUtils.intersectPlane(
-                      { origin: rayOrigin, direction: rayDir }, 
-                      { normal: planeNormal, distance: -Vec3Utils.dot(pos, planeNormal) }
-                  );
-                  if (t !== null) {
-                      const hit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
-                      Vec3Utils.copy(dragStartPoint.current, hit);
+              if (mode === 'translate') {
+                  // Setup drag start points based on axis
+                  if (hoverAxis.length === 1) { // X, Y, Z (Lines)
+                     const axisDir = getAxisDir(hoverAxis, rot);
+                     const closest = RayUtils.closestPointsRayRay(rayOrigin, rayDir, pos, axisDir);
+                     if (closest) {
+                         dragStartPoint.current = { x: closest.t2, y: 0, z: 0 }; 
+                     }
+                  } else if (hoverAxis.length === 2) { // Plane
+                      const planeNormal = getPlaneNormal(hoverAxis, rot);
+                      const t = RayUtils.intersectPlane(
+                          { origin: rayOrigin, direction: rayDir }, 
+                          { normal: planeNormal, distance: -Vec3Utils.dot(pos, planeNormal) }
+                      );
+                      if (t !== null) {
+                          const hit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
+                          Vec3Utils.copy(dragStartPoint.current, hit);
+                      }
+                  } else if (hoverAxis === 'VIEW') {
+                      const planeNormal = { x: camera.getWorldDirection(new THREE.Vector3()).x, y: camera.getWorldDirection(new THREE.Vector3()).y, z: camera.getWorldDirection(new THREE.Vector3()).z };
+                      const t = RayUtils.intersectPlane(
+                        { origin: rayOrigin, direction: rayDir },
+                        { normal: planeNormal, distance: -Vec3Utils.dot(pos, planeNormal) }
+                      );
+                      if (t !== null) {
+                          const hit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
+                          Vec3Utils.copy(dragStartPoint.current, hit);
+                      }
                   }
-              } else if (hoverAxis === 'VIEW') {
-                  // View plane drag (sphere) - Drag parallel to camera plane
-                  const planeNormal = { x: camera.getWorldDirection(new THREE.Vector3()).x, y: camera.getWorldDirection(new THREE.Vector3()).y, z: camera.getWorldDirection(new THREE.Vector3()).z };
-                  const t = RayUtils.intersectPlane(
-                    { origin: rayOrigin, direction: rayDir },
-                    { normal: planeNormal, distance: -Vec3Utils.dot(pos, planeNormal) }
-                  );
-                  if (t !== null) {
-                      const hit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
-                      Vec3Utils.copy(dragStartPoint.current, hit);
+              } else if (mode === 'rotate') {
+                  if (hoverAxis.length === 1) { // X, Y, Z Rings
+                      const planeNormal = getPlaneNormal(hoverAxis, rot);
+                      // Plane passes through center
+                      const t = RayUtils.intersectPlane(
+                         { origin: rayOrigin, direction: rayDir },
+                         { normal: planeNormal, distance: -Vec3Utils.dot(pos, planeNormal) }
+                      );
+                      if (t !== null) {
+                          const hit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
+                          dragStartAngle.current = getRotationAngle(hit, pos, hoverAxis, rot);
+                      }
                   }
               }
           }
@@ -165,44 +220,78 @@ export const Gizmo: React.FC<GizmoProps> = ({
              // Dragging Logic
              const rayDir = { x: raycaster.ray.direction.x, y: raycaster.ray.direction.y, z: raycaster.ray.direction.z };
              const rayOrigin = { x: raycaster.ray.origin.x, y: raycaster.ray.origin.y, z: raycaster.ray.origin.z };
-             const startPos = dragStartTargetPos.current;
+             
+             if (mode === 'translate') {
+                 const startPos = dragStartTargetPos.current;
+                 let newPos = Vec3Utils.clone(startPos);
 
-             let newPos = Vec3Utils.clone(startPos);
+                 if (activeAxis.length === 1) { // Linear Drag
+                     const axisDir = getAxisDir(activeAxis, rot);
+                     const closest = RayUtils.closestPointsRayRay(rayOrigin, rayDir, startPos, axisDir);
+                     if (closest) {
+                         const delta = closest.t2 - dragStartPoint.current.x;
+                         Vec3Utils.scaleAndAdd(startPos, axisDir, delta, newPos);
+                     }
+                 } else if (activeAxis.length === 2 || activeAxis === 'VIEW') { // Planar Drag
+                     let planeNormal = {x:0, y:0, z:0};
+                     if (activeAxis === 'VIEW') {
+                         const dir = new THREE.Vector3();
+                         camera.getWorldDirection(dir);
+                         planeNormal = { x: dir.x, y: dir.y, z: dir.z };
+                     } else {
+                         planeNormal = getPlaneNormal(activeAxis, rot);
+                     }
 
-             if (activeAxis.length === 1) { // Linear Drag
-                 const axisDir = getAxisDir(activeAxis, rot);
-                 const closest = RayUtils.closestPointsRayRay(rayOrigin, rayDir, startPos, axisDir);
-                 if (closest) {
-                     const delta = closest.t2 - dragStartPoint.current.x;
-                     Vec3Utils.scaleAndAdd(startPos, axisDir, delta, newPos);
+                     const t = RayUtils.intersectPlane(
+                        { origin: rayOrigin, direction: rayDir },
+                        { normal: planeNormal, distance: -Vec3Utils.dot(startPos, planeNormal) }
+                     );
+                     
+                     if (t !== null) {
+                         const currentHit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
+                         const delta = Vec3Utils.subtract(currentHit, dragStartPoint.current, Vec3Utils.create());
+                         Vec3Utils.add(startPos, delta, newPos);
+                     }
                  }
-             } else if (activeAxis.length === 2 || activeAxis === 'VIEW') { // Planar Drag
-                 let planeNormal = {x:0, y:0, z:0};
-                 if (activeAxis === 'VIEW') {
-                     const dir = new THREE.Vector3();
-                     camera.getWorldDirection(dir);
-                     planeNormal = { x: dir.x, y: dir.y, z: dir.z };
-                 } else {
-                     planeNormal = getPlaneNormal(activeAxis, rot);
-                 }
-
-                 const t = RayUtils.intersectPlane(
-                    { origin: rayOrigin, direction: rayDir },
-                    { normal: planeNormal, distance: -Vec3Utils.dot(startPos, planeNormal) }
-                 );
                  
-                 if (t !== null) {
-                     const currentHit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
-                     const delta = Vec3Utils.subtract(currentHit, dragStartPoint.current, Vec3Utils.create());
-                     Vec3Utils.add(startPos, delta, newPos);
+                 if (target) {
+                     target.position.set(newPos.x, newPos.y, newPos.z);
+                     target.updateMatrixWorld();
+                 }
+
+             } else if (mode === 'rotate') {
+                 if (activeAxis.length === 1) {
+                     const currentAxisDir = getAxisDir(activeAxis, rot);
+                     // Intersect with plane at center, normal = current axis
+                     const t = RayUtils.intersectPlane(
+                        { origin: rayOrigin, direction: rayDir },
+                        { normal: currentAxisDir, distance: -Vec3Utils.dot(pos, currentAxisDir) }
+                     );
+                     
+                     if (t !== null) {
+                         const hit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
+                         const currentAngle = getRotationAngle(hit, pos, activeAxis, rot);
+                         const deltaAngle = currentAngle - dragStartAngle.current;
+                         
+                         if (target) {
+                             // Apply delta rotation around LOCAL axis
+                             const axisVec = new THREE.Vector3();
+                             if (activeAxis === 'X') axisVec.set(1,0,0);
+                             if (activeAxis === 'Y') axisVec.set(0,1,0);
+                             if (activeAxis === 'Z') axisVec.set(0,0,1);
+                             
+                             const q = new THREE.Quaternion().setFromAxisAngle(axisVec, deltaAngle);
+                             // To apply local rotation: multiply current by q
+                             target.quaternion.multiply(q);
+                             target.updateMatrixWorld();
+                             
+                             // Reset drag start to avoid accumulation errors or jumps
+                             dragStartAngle.current = currentAngle;
+                         }
+                     }
                  }
              }
-
-             // Update Target or allow API consumption of onDrag
-             if (target) {
-                 target.position.set(newPos.x, newPos.y, newPos.z);
-                 target.updateMatrixWorld();
-             }
+             
              onDrag?.();
 
           } else {
@@ -213,7 +302,7 @@ export const Gizmo: React.FC<GizmoProps> = ({
              const scale = dist * 0.15; 
              const ray = { origin: { x: raycaster.ray.origin.x, y: raycaster.ray.origin.y, z: raycaster.ray.origin.z }, direction: { x: raycaster.ray.direction.x, y: raycaster.ray.direction.y, z: raycaster.ray.direction.z } };
              
-             const axis = getHoverAxis(ray, pos, rot, scale);
+             const axis = getHoverAxis(ray, pos, rot, scale, mode);
              if (axis !== hoverAxis) setHoverAxis(axis);
           }
       };
@@ -227,67 +316,106 @@ export const Gizmo: React.FC<GizmoProps> = ({
           window.removeEventListener('pointerup', onPointerUp);
           canvas.removeEventListener('pointermove', onPointerMove);
       };
-  }, [gl, hoverAxis, activeAxis, target, position, rotation, camera, raycaster]);
+  }, [gl, hoverAxis, activeAxis, target, position, rotation, camera, raycaster, mode, onModeChange]);
 
 
-  const getHoverAxis = (ray: {origin:Vec3, direction:Vec3}, pos: Vec3, rot: THREE.Quaternion, scale: number): GizmoHoverAxis => {
+  const getHoverAxis = (ray: {origin:Vec3, direction:Vec3}, pos: Vec3, rot: THREE.Quaternion, scale: number, mode: string): GizmoHoverAxis => {
       // 1. Check Center Sphere
       if (RayUtils.intersectSphere(ray, pos, 0.1 * scale)) return 'VIEW';
       
+      // Check Switch Handle (Cube at 0.35, 0.35, 0.35 offset)
+      if (onModeChange) {
+          const switchOffset = applyRotation({x:0.35, y:0.35, z:0.35}, rot); // Match shader hardcoded offset
+          const switchPos = Vec3Utils.scaleAndAdd(pos, switchOffset, scale, Vec3Utils.create());
+          if (RayUtils.intersectSphere(ray, switchPos, 0.08 * scale)) return 'SWITCH';
+      }
+
       let bestAxis: GizmoHoverAxis = null;
       let minDist = Infinity;
       const threshold = 0.1 * scale;
 
-      // 2. Check Axes (Line Segments)
-      const axes = [
-        { id: 'X', dir: getAxisDir('X', rot) },
-        { id: 'Y', dir: getAxisDir('Y', rot) },
-        { id: 'Z', dir: getAxisDir('Z', rot) }
-      ];
+      if (mode === 'translate') {
+          // 2. Check Axes (Line Segments)
+          const axes = [
+            { id: 'X', dir: getAxisDir('X', rot) },
+            { id: 'Y', dir: getAxisDir('Y', rot) },
+            { id: 'Z', dir: getAxisDir('Z', rot) }
+          ];
 
-      for (let a of axes) {
-         const end = Vec3Utils.scaleAndAdd(pos, a.dir, 1.0 * scale, Vec3Utils.create());
-         const d = RayUtils.distRaySegment(ray, pos, end);
-         if (d < threshold && d < minDist) {
-             minDist = d;
-             bestAxis = a.id as GizmoHoverAxis;
-         }
-      }
-      
-      if (bestAxis) return bestAxis;
-
-      // 3. Check Planes (Small Quads near origin)
-      const planeSize = 0.25 * scale; 
-      
-      const checkPlane = (normal: Vec3, uDir: Vec3, vDir: Vec3, id: GizmoHoverAxis) => {
-          const t = RayUtils.intersectPlane(ray, { normal, distance: -Vec3Utils.dot(pos, normal) });
-          if (t !== null && t > 0) {
-              const hit = Vec3Utils.scaleAndAdd(ray.origin, ray.direction, t, Vec3Utils.create());
-              const localHit = Vec3Utils.subtract(hit, pos, Vec3Utils.create());
-              
-              const u = Vec3Utils.dot(localHit, uDir);
-              const v = Vec3Utils.dot(localHit, vDir);
-              
-              if (u > 0 && u < planeSize && v > 0 && v < planeSize) {
-                  return true;
-              }
+          for (let a of axes) {
+             const end = Vec3Utils.scaleAndAdd(pos, a.dir, 1.0 * scale, Vec3Utils.create());
+             const d = RayUtils.distRaySegment(ray, pos, end);
+             if (d < threshold && d < minDist) {
+                 minDist = d;
+                 bestAxis = a.id as GizmoHoverAxis;
+             }
           }
-          return false;
-      };
+          
+          if (bestAxis) return bestAxis;
 
-      // Transform plane basis vectors
-      const xDir = getAxisDir('X', rot);
-      const yDir = getAxisDir('Y', rot);
-      const zDir = getAxisDir('Z', rot);
+          // 3. Check Planes (Small Quads near origin)
+          const planeSize = 0.25 * scale; 
+          
+          const checkPlane = (normal: Vec3, uDir: Vec3, vDir: Vec3, id: GizmoHoverAxis) => {
+              const t = RayUtils.intersectPlane(ray, { normal, distance: -Vec3Utils.dot(pos, normal) });
+              if (t !== null && t > 0) {
+                  const hit = Vec3Utils.scaleAndAdd(ray.origin, ray.direction, t, Vec3Utils.create());
+                  const localHit = Vec3Utils.subtract(hit, pos, Vec3Utils.create());
+                  
+                  const u = Vec3Utils.dot(localHit, uDir);
+                  const v = Vec3Utils.dot(localHit, vDir);
+                  
+                  if (u > 0 && u < planeSize && v > 0 && v < planeSize) {
+                      return true;
+                  }
+              }
+              return false;
+          };
 
-      // YZ Plane (X-Normal)
-      if (checkPlane(xDir, yDir, zDir, 'YZ')) return 'YZ';
-      // XZ Plane (Y-Normal)
-      if (checkPlane(yDir, xDir, zDir, 'XZ')) return 'XZ';
-      // XY Plane (Z-Normal)
-      if (checkPlane(zDir, xDir, yDir, 'XY')) return 'XY';
+          // Transform plane basis vectors
+          const xDir = getAxisDir('X', rot);
+          const yDir = getAxisDir('Y', rot);
+          const zDir = getAxisDir('Z', rot);
 
-      return null;
+          if (checkPlane(xDir, yDir, zDir, 'YZ')) return 'YZ';
+          if (checkPlane(yDir, xDir, zDir, 'XZ')) return 'XZ';
+          if (checkPlane(zDir, xDir, yDir, 'XY')) return 'XY';
+      
+      } else if (mode === 'rotate') {
+          // Check Rings
+          const ringRadius = 0.8 * scale;
+          const ringThreshold = 0.1 * scale; // How thick is the grab area
+
+          const checkRing = (normal: Vec3, id: GizmoHoverAxis) => {
+              const t = RayUtils.intersectPlane(ray, { normal, distance: -Vec3Utils.dot(pos, normal) });
+              if (t !== null && t > 0) {
+                  const hit = Vec3Utils.scaleAndAdd(ray.origin, ray.direction, t, Vec3Utils.create());
+                  const dist = Vec3Utils.distance(hit, pos);
+                  if (Math.abs(dist - ringRadius) < ringThreshold) {
+                      return t; // Return distance to camera
+                  }
+              }
+              return Infinity;
+          };
+
+          const xDir = getAxisDir('X', rot);
+          const yDir = getAxisDir('Y', rot);
+          const zDir = getAxisDir('Z', rot);
+
+          // X-Ring (Normal is X)
+          const dx = checkRing(xDir, 'X');
+          if (dx < minDist) { minDist = dx; bestAxis = 'X'; }
+          
+          // Y-Ring (Normal is Y)
+          const dy = checkRing(yDir, 'Y');
+          if (dy < minDist) { minDist = dy; bestAxis = 'Y'; }
+
+          // Z-Ring (Normal is Z)
+          const dz = checkRing(zDir, 'Z');
+          if (dz < minDist) { minDist = dz; bestAxis = 'Z'; }
+      }
+
+      return bestAxis;
   }
 
   // Render Loop
@@ -315,7 +443,9 @@ export const Gizmo: React.FC<GizmoProps> = ({
          rotationMatrixRef.current,
          scale,
          hoverAxis,
-         activeAxis
+         activeAxis,
+         mode,
+         !!onModeChange
      );
   }, 1);
 

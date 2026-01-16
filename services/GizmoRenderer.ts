@@ -1,4 +1,5 @@
-export type GizmoHoverAxis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'VIEW' | null;
+export type GizmoHoverAxis = 'X' | 'Y' | 'Z' | 'XY' | 'XZ' | 'YZ' | 'VIEW' | 'SWITCH' | null;
+export type GizmoMode = 'translate' | 'rotate' | 'scale';
 
 type GizmoOffsets = {
     cylinder: number; cylinderCount: number;
@@ -6,6 +7,8 @@ type GizmoOffsets = {
     quad: number; quadCount: number;
     quadBorder: number; quadBorderCount: number;
     sphere: number; sphereCount: number;
+    ring: number; ringCount: number;
+    cube: number; cubeCount: number;
 };
 
 /**
@@ -16,6 +19,7 @@ type GizmoOffsets = {
  * - Arbitrary Rotation (Matrix4)
  * - Scale
  * - Hover/Active states
+ * - Modes: Translate, Rotate
  */
 export class GizmoRenderer {
     private gl: WebGL2RenderingContext | null = null;
@@ -135,6 +139,54 @@ export class GizmoRenderer {
             }
         }
 
+        // 6. Ring (Annulus on XY plane)
+        const ringRad = 0.8;
+        const ringThick = 0.02; 
+        const ringSegs = 64;
+        const ringOff = vertices.length / 3;
+        for (let i = 0; i < ringSegs; i++) {
+            const th1 = (i / ringSegs) * Math.PI * 2;
+            const th2 = ((i + 1) / ringSegs) * Math.PI * 2;
+            
+            const c1 = Math.cos(th1), s1 = Math.sin(th1);
+            const c2 = Math.cos(th2), s2 = Math.sin(th2);
+            
+            const rIn = ringRad - ringThick;
+            const rOut = ringRad + ringThick;
+            
+            // Quad per segment
+            vertices.push(
+                c1*rIn, s1*rIn, 0,  c1*rOut, s1*rOut, 0,  c2*rIn, s2*rIn, 0,
+                c2*rIn, s2*rIn, 0,  c1*rOut, s1*rOut, 0,  c2*rOut, s2*rOut, 0
+            );
+        }
+
+        // 7. Cube (Mode Switch Handle)
+        const cubeOff = vertices.length / 3;
+        const cs = 0.04; // Half-size
+        // Simple Cube Faces
+        const cVerts = [
+            // Front
+            -cs, -cs,  cs,   cs, -cs,  cs,  -cs,  cs,  cs,
+             cs, -cs,  cs,   cs,  cs,  cs,  -cs,  cs,  cs,
+            // Back
+            -cs, -cs, -cs,  -cs,  cs, -cs,   cs, -cs, -cs,
+             cs, -cs, -cs,  -cs,  cs, -cs,   cs,  cs, -cs,
+            // Top
+            -cs,  cs, -cs,  -cs,  cs,  cs,   cs,  cs, -cs,
+            -cs,  cs,  cs,   cs,  cs,  cs,   cs,  cs, -cs,
+            // Bottom
+            -cs, -cs, -cs,   cs, -cs, -cs,  -cs, -cs,  cs,
+             cs, -cs, -cs,   cs, -cs,  cs,  -cs, -cs,  cs,
+            // Right
+             cs, -cs, -cs,   cs,  cs, -cs,   cs, -cs,  cs,
+             cs,  cs, -cs,   cs,  cs,  cs,   cs, -cs,  cs,
+            // Left
+            -cs, -cs, -cs,  -cs, -cs,  cs,  -cs,  cs, -cs,
+            -cs, -cs,  cs,  -cs,  cs,  cs,  -cs,  cs, -cs,
+        ];
+        vertices.push(...cVerts);
+
         this.vao = gl.createVertexArray();
         const vbo = gl.createBuffer();
         gl.bindVertexArray(this.vao);
@@ -149,7 +201,9 @@ export class GizmoRenderer {
             cone: coneOff, coneCount: quadOff - coneOff,
             quad: quadOff, quadCount: 6,
             quadBorder: borderOff, quadBorderCount: 4,
-            sphere: sphereOff, sphereCount: (vertices.length / 3) - sphereOff,
+            sphere: sphereOff, sphereCount: (ringOff - sphereOff),
+            ring: ringOff, ringCount: cubeOff - ringOff,
+            cube: cubeOff, cubeCount: 36
         };
     }
 
@@ -190,6 +244,8 @@ export class GizmoRenderer {
      * @param scale Overall Scale
      * @param hoverAxis Current Hover Axis ID
      * @param activeAxis Current Active Axis ID
+     * @param mode 'translate' | 'rotate'
+     * @param showModeSwitch If true, renders a small handle to switch modes
      */
     renderGizmos(
         vp: Float32Array, 
@@ -197,7 +253,9 @@ export class GizmoRenderer {
         rotation: ArrayLike<number> | null, 
         scale: number, 
         hoverAxis: GizmoHoverAxis, 
-        activeAxis: GizmoHoverAxis
+        activeAxis: GizmoHoverAxis,
+        mode: GizmoMode = 'translate',
+        showModeSwitch: boolean = false
     ) {
         if (!this.gl || !this.program || !this.vao || !this.offsets) return;
         const gl = this.gl;
@@ -236,67 +294,68 @@ export class GizmoRenderer {
         const mFinal = new Float32Array(16);
         const mPart = new Float32Array(16); // Local part rotation/offset
 
-        const drawPart = (axis: 'X' | 'Y' | 'Z' | 'VIEW', type: 'arrow' | 'plane' | 'sphere', color: number[]) => {
-            const axisName = axis === 'VIEW' ? 'VIEW' : axis;
-            const checkName = type === 'plane' ? (axis === 'X' ? 'YZ' : (axis === 'Y' ? 'XZ' : 'XY')) : axisName;
+        // Helper to reset mPart to Identity
+        const ident = () => { mPart.fill(0); mPart[0]=1; mPart[5]=1; mPart[10]=1; mPart[15]=1; };
 
-            const isHover = hoverAxis === checkName;
-            const isActive = activeAxis === checkName;
-
-            // Reset part matrix to identity
-            mPart.fill(0); mPart[0]=1; mPart[5]=1; mPart[10]=1; mPart[15]=1;
-
-            if (type === 'arrow') {
-                // Geometry is Y-up.
+        // Helper to Draw Part
+        const draw = (axis: GizmoHoverAxis, type: 'arrow' | 'plane' | 'sphere' | 'ring' | 'cube', color: number[]) => {
+             const isHover = hoverAxis === axis;
+             const isActive = activeAxis === axis;
+             
+             ident();
+             
+             if (type === 'arrow') {
+                 // Geometry is Y-up.
                 if (axis === 'X') {
                     // Rotate Y to X: -90 deg around Z
-                    // [ 0  1  0]
-                    // [-1  0  0]
-                    // [ 0  0  1]
-                    mPart[0] = 0; mPart[1] = -1; 
-                    mPart[4] = 1; mPart[5] = 0; 
+                    mPart[0] = 0; mPart[1] = -1; mPart[4] = 1; mPart[5] = 0; 
                 } else if (axis === 'Z') {
                     // Rotate Y to Z: 90 deg around X
-                    // [ 1  0  0]
-                    // [ 0  0 -1]
-                    // [ 0  1  0]
-                    mPart[5] = 0; mPart[6] = -1;
-                    mPart[9] = 1; mPart[10] = 0;
+                    mPart[5] = 0; mPart[6] = -1; mPart[9] = 1; mPart[10] = 0;
                 }
-                // Y is Identity (matches geom)
-
+                
                 this.multiply(mFinal, mBase, mPart);
                 gl.uniformMatrix4fv(uModel, false, mFinal);
                 gl.uniform3fv(uColor, (isActive || isHover) ? [1, 1, 1] : color);
                 gl.uniform1f(uAlpha, 1.0);
                 gl.drawArrays(gl.TRIANGLES, this.offsets!.cylinder, this.offsets!.cylinderCount);
                 gl.drawArrays(gl.TRIANGLES, this.offsets!.cone, this.offsets!.coneCount);
-            }
-            else if (type === 'sphere') {
-                // Center Sphere - Just Base Transform
+             } 
+             else if (type === 'ring') {
+                 // Geometry is Ring on XY plane.
+                 // X-Rotation (Red) -> YZ Plane -> Rotate XY to YZ (-90 Y)
+                 if (axis === 'X') {
+                     mPart[0] = 0; mPart[2] = -1; mPart[8] = 1; mPart[10] = 0;
+                 }
+                 // Y-Rotation (Green) -> XZ Plane -> Rotate XY to XZ (90 X)
+                 else if (axis === 'Y') {
+                     mPart[5] = 0; mPart[6] = 1; mPart[9] = -1; mPart[10] = 0;
+                 }
+                 // Z-Rotation (Blue) -> XY Plane -> Identity
+                 
+                 this.multiply(mFinal, mBase, mPart);
+                 gl.uniformMatrix4fv(uModel, false, mFinal);
+                 gl.uniform3fv(uColor, (isActive || isHover) ? [1, 1, 1] : color);
+                 gl.uniform1f(uAlpha, 1.0);
+                 gl.drawArrays(gl.TRIANGLES, this.offsets!.ring, this.offsets!.ringCount);
+             }
+             else if (type === 'sphere') {
                 gl.uniformMatrix4fv(uModel, false, mBase);
                 gl.uniform3fv(uColor, (isActive || isHover) ? [1, 1, 1] : [0.8, 0.8, 0.8]);
                 gl.uniform1f(uAlpha, 1.0);
                 gl.drawArrays(gl.TRIANGLES, this.offsets!.sphere, this.offsets!.sphereCount);
-            }
-            else if (type === 'plane') {
+             }
+             else if (type === 'plane') {
                 // Geometry is Plane on XY (+ offset).
                 if (axis === 'X') {
-                    // YZ Plane -> Rotate geom XY to YZ. 
-                    // Rotate X to Y, Y to Z? 
-                    // Geom is XY. We want YZ. 
-                    // Rotate Y-axis 90 deg around Y? No.
-                    // Rotate -90 around Y -> X becomes Z. Y stays Y. -> ZY Plane.
-                    mPart[0] = 0; mPart[2] = -1;
-                    mPart[8] = 1; mPart[10] = 0;
+                     // YZ Plane -> Rotate geom XY to YZ. 
+                     // YZ is X-Normal.
+                     mPart[0] = 0; mPart[2] = -1; mPart[8] = 1; mPart[10] = 0;
                 } else if (axis === 'Y') {
-                    // XZ Plane -> Rotate geom XY to XZ.
-                    // Rotate 90 around X -> Y becomes Z.
-                    mPart[5] = 0; mPart[6] = 1;
-                    mPart[9] = -1; mPart[10] = 0;
+                     // XZ Plane -> Rotate 90 X: Y->Z
+                     mPart[5] = 0; mPart[6] = 1; mPart[9] = -1; mPart[10] = 0;
                 }
-                // Z is XY Plane (matches geom)
-
+                
                 this.multiply(mFinal, mBase, mPart);
                 gl.uniformMatrix4fv(uModel, false, mFinal);
                 gl.uniform3fv(uColor, color);
@@ -308,16 +367,38 @@ export class GizmoRenderer {
                     gl.uniform1f(uAlpha, 1.0);
                     gl.drawArrays(gl.LINE_LOOP, this.offsets!.quadBorder, this.offsets!.quadBorderCount);
                 }
-            }
+             }
+             else if (type === 'cube') {
+                 // Render specific cube handle.
+                 // Offset it slightly to the side to be accessible
+                 mPart[12] = 0.35; mPart[13] = 0.35; mPart[14] = 0.35; 
+                 this.multiply(mFinal, mBase, mPart);
+                 gl.uniformMatrix4fv(uModel, false, mFinal);
+                 gl.uniform3fv(uColor, (isActive || isHover) ? [1, 1, 0] : color);
+                 gl.uniform1f(uAlpha, 1.0);
+                 gl.drawArrays(gl.TRIANGLES, this.offsets!.cube, this.offsets!.cubeCount);
+             }
         };
 
-        drawPart('VIEW', 'sphere', [1, 1, 1]);
-        drawPart('X', 'plane', [0, 1, 1]); // YZ
-        drawPart('Y', 'plane', [1, 0, 1]); // XZ
-        drawPart('Z', 'plane', [1, 1, 0]); // XY
-        drawPart('X', 'arrow', [1, 0, 0]);
-        drawPart('Y', 'arrow', [0, 1, 0]);
-        drawPart('Z', 'arrow', [0, 0, 1]);
+        if (mode === 'translate') {
+            draw('VIEW', 'sphere', [1, 1, 1]);
+            draw('X', 'plane', [0, 1, 1]); // YZ
+            draw('Y', 'plane', [1, 0, 1]); // XZ
+            draw('Z', 'plane', [1, 1, 0]); // XY
+            draw('X', 'arrow', [1, 0, 0]);
+            draw('Y', 'arrow', [0, 1, 0]);
+            draw('Z', 'arrow', [0, 0, 1]);
+        } else if (mode === 'rotate') {
+             draw('VIEW', 'sphere', [1, 1, 1]);
+             // Draw Rings
+             draw('X', 'ring', [1, 0, 0]);
+             draw('Y', 'ring', [0, 1, 0]);
+             draw('Z', 'ring', [0, 0, 1]);
+        }
+
+        if (showModeSwitch) {
+            draw('SWITCH', 'cube', [0.8, 0.4, 0.0]); // Orange handle
+        }
 
         gl.enable(gl.DEPTH_TEST);
         gl.disable(gl.BLEND);

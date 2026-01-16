@@ -152,6 +152,17 @@ const StencilPlane = forwardRef<THREE.Group, {
   const groupRef = useRef<THREE.Group>(null!);
   const proxyRef = useRef<THREE.Group>(null!); 
   
+  // Local state to toggle between translate and rotate for the Stencil
+  // Currently we hardcode toggle on click for demo or expose prop.
+  // The user requested 'rotate object mode'. We will assume a default 'rotate' capability
+  // if 'tool' is 'select' and we are editing the WHOLE stencil.
+  // But `tool` is 'select' (points) or 'loop'.
+  // We need a mode to move the WHOLE stencil vs moving points.
+  // Currently: `tool === 'select'` enables `CornerHandle`.
+  // If no point selected, we want to move the whole plane.
+  // Let's add a `gizmoMode` toggle. 
+  const [gizmoMode, setGizmoMode] = useState<'translate' | 'rotate'>('translate');
+
   useImperativeHandle(ref, () => groupRef.current);
 
   // ------------------------------------------------------------------
@@ -334,6 +345,16 @@ const StencilPlane = forwardRef<THREE.Group, {
         });
      }
   };
+  
+  // Toggle mode with keyboard 'R' for rotate, 'G' for grab/translate (Blender style)
+  useEffect(() => {
+     const handler = (e: KeyboardEvent) => {
+         if (e.key.toLowerCase() === 'r') setGizmoMode('rotate');
+         if (e.key.toLowerCase() === 'g') setGizmoMode('translate');
+     };
+     window.addEventListener('keydown', handler);
+     return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // ------------------------------------------------------------------
   // INTERACTIONS
@@ -364,7 +385,10 @@ const StencilPlane = forwardRef<THREE.Group, {
   const handleClick = (e: ThreeEvent<PointerEvent>) => {
       if (!editable) return;
       e.stopPropagation();
-      if (tool === 'select') setSelectedPoint(null); 
+      if (tool === 'select') {
+          // If we clicked background, deselect point, select WHOLE object logic (handled by Gizmo auto-target)
+          setSelectedPoint(null); 
+      }
       else if (tool === 'loop' && hoverLoop) {
          handleInternalAddLoop(hoverLoop.type, hoverLoop.value);
          setHoverLoop(null);
@@ -405,9 +429,11 @@ const StencilPlane = forwardRef<THREE.Group, {
          )}
       </group>
       
+      {/* Gizmo Logic: If point selected, target proxy (translate only). If NO point selected, target Group (Translate OR Rotate) */}
       {editable && tool === 'select' && (
          <Gizmo 
            target={selectedPoint !== null ? proxyRef.current : groupRef.current}
+           mode={selectedPoint !== null ? 'translate' : gizmoMode}
            onDragStart={() => onDragChange(true)}
            onDragEnd={() => onDragChange(false)}
            onDrag={handleGizmoDrag}
@@ -417,9 +443,8 @@ const StencilPlane = forwardRef<THREE.Group, {
   );
 });
 
-// ------------------------------------------------------------------
-// PROJECTION PREVIEW COMPONENT
-// ------------------------------------------------------------------
+// ... rest of Scene.tsx (ProjectionPreview, ProjectionBaker, PaintableMesh, Scene)
+// Copying previous content for context completion ...
 const ProjectionPreview = ({ stencil, stencilMeshRef, lutTexture, lutBounds }: { 
     stencil: StencilSettings, 
     stencilMeshRef: React.MutableRefObject<THREE.Group | null>,
@@ -466,26 +491,14 @@ const ProjectionPreview = ({ stencil, stencilMeshRef, lutTexture, lutBounds }: {
       
       void main() {
          vec4 localPos = stencilInverseMatrix * vec4(vWorldPos, 1.0);
-         
-         // Map localPos.xy to LUT UV
          vec2 lutUV = (localPos.xy - lutBounds.xy) / lutBounds.zw;
-         
-         // Discard if outside LUT/Grid Bounds
          if (lutUV.x < 0.0 || lutUV.x > 1.0 || lutUV.y < 0.0 || lutUV.y > 1.0) discard;
-         
-         // Sample LUT to get Stencil UV
          vec4 stencilMap = texture2D(lutTexture, lutUV);
-         
-         // Alpha 0 in LUT means empty space (if cleared to transparent)
          if (stencilMap.a < 0.5) discard;
-         
          vec2 uv = stencilMap.xy;
-         
          if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
-         
          vec4 color = texture2D(stencilTexture, uv);
          if (color.a < 0.01) discard;
-         
          gl_FragColor = vec4(color.rgb, color.a * opacity);
       }
     `,
@@ -510,15 +523,11 @@ const ProjectionPreview = ({ stencil, stencilMeshRef, lutTexture, lutBounds }: {
   );
 };
 
-// ------------------------------------------------------------------
-// PROJECTION BAKER HELPER
-// ------------------------------------------------------------------
 const ProjectionBaker = forwardRef<ProjectionBakerHandle, any>(({ stencil, meshGeometry, stencilObjectRef, lutTexture, lutBounds }, ref) => {
   const { gl } = useThree();
   const fbo = useMemo(() => new THREE.WebGLRenderTarget(TEXTURE_SIZE, TEXTURE_SIZE, { samples: 4 }), []);
   const scene = useMemo(() => new THREE.Scene(), []);
   const camera = useMemo(() => new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), []);
-  
   const stencilTexture = useTexture(stencil.image!); 
 
   const bakeMaterial = useMemo(() => {
@@ -548,18 +557,12 @@ const ProjectionBaker = forwardRef<ProjectionBakerHandle, any>(({ stencil, meshG
           
           void main() {
              vec4 localPos = stencilInverseMatrix * vec4(vWorldPos, 1.0);
-             
              vec2 lutUV = (localPos.xy - lutBounds.xy) / lutBounds.zw;
-             
              if (lutUV.x < 0.0 || lutUV.x > 1.0 || lutUV.y < 0.0 || lutUV.y > 1.0) discard;
-             
              vec4 stencilMap = texture2D(lutTexture, lutUV);
              if (stencilMap.a < 0.5) discard;
-             
              vec2 uv = stencilMap.xy;
-             
              if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
-             
              vec4 color = texture2D(stencilTexture, uv);
              if (color.a < 0.1) discard;
              gl_FragColor = vec4(color.rgb, color.a * opacity);
@@ -572,13 +575,10 @@ const ProjectionBaker = forwardRef<ProjectionBakerHandle, any>(({ stencil, meshG
 
   const triggerBake = useCallback(() => {
      if (!stencilObjectRef.current || !stencilTexture || !lutTexture) return null;
-     
      (stencilTexture as THREE.Texture).colorSpace = THREE.SRGBColorSpace;
-     
      const stencilMesh = stencilObjectRef.current;
      stencilMesh.updateMatrixWorld();
      const inverseMatrix = stencilMesh.matrixWorld.clone().invert();
-     
      bakeMaterial.uniforms.stencilTexture.value = stencilTexture;
      bakeMaterial.uniforms.lutTexture.value = lutTexture;
      bakeMaterial.uniforms.lutBounds.value.copy(lutBounds);
@@ -587,7 +587,6 @@ const ProjectionBaker = forwardRef<ProjectionBakerHandle, any>(({ stencil, meshG
      
      const bakeMesh = new THREE.Mesh(meshGeometry, bakeMaterial);
      scene.add(bakeMesh);
-     
      gl.setRenderTarget(fbo);
      gl.setClearColor(new THREE.Color(0, 0, 0), 0);
      gl.clear();
@@ -597,35 +596,25 @@ const ProjectionBaker = forwardRef<ProjectionBakerHandle, any>(({ stencil, meshG
      const buffer = new Uint8Array(TEXTURE_SIZE * TEXTURE_SIZE * 4);
      gl.readRenderTargetPixels(fbo, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE, buffer);
      scene.remove(bakeMesh);
-     
      return new ImageData(new Uint8ClampedArray(buffer), TEXTURE_SIZE, TEXTURE_SIZE);
   }, [gl, fbo, scene, camera, bakeMaterial, stencil, stencilTexture, lutTexture, lutBounds, meshGeometry, stencilObjectRef]);
 
-  useImperativeHandle(ref, () => ({
-    bake: triggerBake
-  }));
-
+  useImperativeHandle(ref, () => ({ bake: triggerBake }));
   return null;
 });
 
-// ------------------------------------------------------------------
-// PAINTABLE MESH COMPONENT
-// ------------------------------------------------------------------
 const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAltPressed: boolean }> = ({ 
   brush, layers, activeLayerId, stencil, setStencil, isAltPressed 
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const [hovered, setHover] = useState(false);
   const [gizmoDragging, setGizmoDragging] = useState(false);
-  
   const isPaintingRef = useRef(false);
   const lastUVRef = useRef<Vec2 | null>(null); 
   const distanceAccumulatorRef = useRef(0);
   const compositeDirtyRef = useRef(false);
-
   const isInteractingWithStencil = gizmoDragging;
   const isStencilEditMode = stencil.visible && stencil.mode === 'edit';
-
   const stencilMeshRef = useRef<THREE.Group>(null);
   const bakerRef = useRef<ProjectionBakerHandle>(null);
   
@@ -677,17 +666,10 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
         compositeDirtyRef.current = true;
     };
 
-    const handleCompositeUpdate = () => {
-        compositeDirtyRef.current = true;
-    };
-
+    const handleCompositeUpdate = () => { compositeDirtyRef.current = true; };
     const unsubBake = eventBus.on(Events.REQ_BAKE_PROJECTION, handleBakeRequest);
     const unsubComp = eventBus.on(Events.REFRESH_COMPOSITE, handleCompositeUpdate);
-
-    return () => {
-        unsubBake();
-        unsubComp();
-    };
+    return () => { unsubBake(); unsubComp(); };
   }, [layers]); 
 
   useEffect(() => { compositeDirtyRef.current = true; }, [layers]);
@@ -729,18 +711,13 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
   
   useEffect(() => {
      if (brush.maskImage) {
-        BrushAPI.processMaskTip(brush.maskImage).then(mask => {
-            maskCanvasRef.current = mask;
-        });
-     } else { 
-        maskCanvasRef.current = null; 
-     }
+        BrushAPI.processMaskTip(brush.maskImage).then(mask => { maskCanvasRef.current = mask; });
+     } else { maskCanvasRef.current = null; }
   }, [brush.maskImage]);
 
   const drawStamp = useCallback((ctx: CanvasRenderingContext2D, x: number, y: number) => {
       const size = brush.size;
       const radius = size / 2;
-      
       let posX = x;
       let posY = y;
       if (brush.positionJitter > 0) {
@@ -748,53 +725,36 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
          posX += (Math.random() - 0.5) * jitterAmount;
          posY += (Math.random() - 0.5) * jitterAmount;
       }
-      
       let angle = (brush.rotation * Math.PI) / 180;
       if (brush.rotationJitter > 0) {
          angle += (Math.random() - 0.5) * 2 * Math.PI * brush.rotationJitter;
       }
-
       ctx.save();
-      
       ctx.translate(posX, posY);
       ctx.rotate(angle);
       ctx.translate(-posX, -posY);
-
       ctx.globalAlpha = brush.opacity * brush.flow;
-      
-      if (brush.mode === 'erase') {
-         ctx.globalCompositeOperation = 'destination-out';
-      } else {
-         ctx.globalCompositeOperation = 'source-over';
-      }
-      
+      if (brush.mode === 'erase') { ctx.globalCompositeOperation = 'destination-out'; } else { ctx.globalCompositeOperation = 'source-over'; }
       const drawX = posX - radius;
       const drawY = posY - radius;
-
       if (maskCanvasRef.current) {
           const mask = maskCanvasRef.current;
           if (brush.mode === 'paint') {
               if (!tintCanvasRef.current) tintCanvasRef.current = document.createElement('canvas');
               const tCvs = tintCanvasRef.current;
-              if (tCvs.width !== size || tCvs.height !== size) {
-                  tCvs.width = size; tCvs.height = size;
-              }
+              if (tCvs.width !== size || tCvs.height !== size) { tCvs.width = size; tCvs.height = size; }
               const tCtx = tCvs.getContext('2d')!;
               tCtx.clearRect(0, 0, size, size);
-              
               tCtx.globalCompositeOperation = 'source-over';
               tCtx.fillStyle = brush.color;
               tCtx.fillRect(0, 0, size, size);
-              
               tCtx.globalCompositeOperation = 'destination-in';
               tCtx.drawImage(mask, 0, 0, mask.width, mask.height, 0, 0, size, size);
-              
               if (brush.textureMix > 0) {
                   tCtx.globalCompositeOperation = 'source-over';
                   tCtx.globalAlpha = brush.textureMix;
                   tCtx.drawImage(mask, 0, 0, mask.width, mask.height, 0, 0, size, size);
               }
-              
               ctx.drawImage(tCvs, drawX, drawY, size, size);
           } else {
               ctx.drawImage(mask, 0, 0, mask.width, mask.height, drawX, drawY, size, size);
@@ -802,7 +762,6 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
       } else {
           if (brush.mode === 'paint') ctx.fillStyle = brush.color;
           else ctx.fillStyle = '#ffffff'; 
-          
           ctx.beginPath(); 
           ctx.arc(posX, posY, radius, 0, Math.PI*2); 
           ctx.fill();
@@ -813,38 +772,28 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
   const paintStroke = useCallback((uv: THREE.Vector2) => {
      const layer = layers.find(l => l.id === activeLayerId);
      if (!layer) return;
-
      const currentX = uv.x * TEXTURE_SIZE;
      const currentY = (1 - uv.y) * TEXTURE_SIZE;
      const currentVec = Vec2Utils.create(currentX, currentY);
-
      if (!lastUVRef.current) {
         drawStamp(layer.ctx, currentX, currentY);
         lastUVRef.current = currentVec;
         compositeDirtyRef.current = true;
         return;
      }
-
      const dist = Vec2Utils.distance(lastUVRef.current, currentVec);
      const stepSize = Math.max(1, brush.size * brush.spacing);
-     
      distanceAccumulatorRef.current += dist;
-
      while (distanceAccumulatorRef.current >= stepSize) {
         Vec2Utils.subtract(currentVec, lastUVRef.current!, TMP_VEC2_1);
         Vec2Utils.normalize(TMP_VEC2_1, TMP_VEC2_1);
-        
         Vec2Utils.scale(TMP_VEC2_1, stepSize, TMP_VEC2_1);
-
         const nextPos = Vec2Utils.create(); 
         Vec2Utils.add(lastUVRef.current!, TMP_VEC2_1, nextPos);
-        
         drawStamp(layer.ctx, nextPos.x, nextPos.y);
-        
         lastUVRef.current = nextPos;
         distanceAccumulatorRef.current -= stepSize;
      }
-     
      compositeDirtyRef.current = true;
   }, [activeLayerId, layers, drawStamp, brush.spacing, brush.size]);
 
