@@ -93,7 +93,21 @@ export const BezierCurve: React.FC<BezierCurveProps> = ({ points, onPointDown })
 
     return (
         <group>
-            {linePoints && <Line points={linePoints} color="white" lineWidth={2} depthTest={false} transparent opacity={0.8} renderOrder={9998} />}
+            {linePoints && (
+                <Line 
+                    points={linePoints} 
+                    color="white" 
+                    lineWidth={0.8} // Thinner: 2.0 * 2/5 = 0.8
+                    depthTest={false} 
+                    transparent 
+                    opacity={0.8} 
+                    renderOrder={9998}
+                    dashed={true}
+                    dashScale={20}
+                    dashSize={0.2}
+                    gapSize={0.1}
+                />
+            )}
             {handles}
             {controlLines.map((pts, i) => <Line key={`cl-${i}`} points={pts} color="#444" lineWidth={1} depthTest={false} transparent opacity={0.5} dashed renderOrder={9998} />)}
         </group>
