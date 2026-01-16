@@ -1,3 +1,4 @@
+
 type Handler<T = any> = (data: T) => void;
 
 class EventBus {
@@ -19,9 +20,9 @@ class EventBus {
 
   emit<T>(event: string, data?: T) {
     // Bridge event to console for debugging
-    console.groupCollapsed(`[EventBus] ${event}`);
-    if (data) console.log('Payload:', data);
-    console.groupEnd();
+    // console.groupCollapsed(`[EventBus] ${event}`);
+    // if (data) console.log('Payload:', data);
+    // console.groupEnd();
 
     this.handlers.get(event)?.forEach(fn => fn(data));
   }
@@ -30,6 +31,9 @@ class EventBus {
 export const Events = {
   // Commands (UI -> Logic)
   CMD_PROJECT_STENCIL: 'cmd_project_stencil',
+  CMD_CURVE_STROKE: 'cmd_curve_stroke',
+  CMD_CURVE_FILL: 'cmd_curve_fill',
+  CMD_CURVE_CLEAR: 'cmd_curve_clear',
   
   // Requests (Logic -> Scene)
   REQ_BAKE_PROJECTION: 'req_bake_projection',

@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { BrushSettings, BrushPreset, StencilSettings, AxisWidgetSettings } from '../types';
 import { PRESET_COLORS, DEFAULT_PRESETS, TIP_LIBRARY } from '../constants';
@@ -15,9 +16,10 @@ interface ToolbarProps {
   axisWidget: AxisWidgetSettings;
   setAxisWidget: (a: AxisWidgetSettings) => void;
   onFillLayer: () => void;
+  curvePointsCount: number;
 }
 
-const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil, axisWidget, setAxisWidget, onFillLayer }) => {
+const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil, axisWidget, setAxisWidget, onFillLayer, curvePointsCount }) => {
   const [activeTab, setActiveTab] = useState<'brush' | 'stencil' | 'view'>('brush');
   const [presets, setPresets] = useState<BrushPreset[]>(DEFAULT_PRESETS);
   const [isGeneratingMask, setIsGeneratingMask] = useState(false);
@@ -160,27 +162,34 @@ const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil,
 
       <hr className="border-neutral-800" />
 
-      {/* TOOLS: Paint, Erase, Fill */}
+      {/* TOOLS: Paint, Erase, Curve, Fill */}
       <div className="space-y-2">
         <label className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">Tools</label>
-        <div className="flex bg-neutral-800 p-1 rounded-lg border border-neutral-700 gap-1">
+        <div className="flex bg-neutral-800 p-1 rounded-lg border border-neutral-700 gap-1 flex-wrap">
           <button
             onClick={() => handleChange('mode', 'paint')}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 py-2 rounded text-[10px] font-medium transition-colors ${brush.mode === 'paint' ? 'bg-blue-600 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}`}
+            className={`flex-1 min-w-[3rem] flex flex-col items-center justify-center gap-1 py-2 rounded text-[10px] font-medium transition-colors ${brush.mode === 'paint' ? 'bg-blue-600 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}`}
           >
             <IconBrush className="w-4 h-4" />
             Paint
           </button>
           <button
             onClick={() => handleChange('mode', 'erase')}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 py-2 rounded text-[10px] font-medium transition-colors ${brush.mode === 'erase' ? 'bg-red-600 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}`}
+            className={`flex-1 min-w-[3rem] flex flex-col items-center justify-center gap-1 py-2 rounded text-[10px] font-medium transition-colors ${brush.mode === 'erase' ? 'bg-red-600 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}`}
           >
             <IconEraser className="w-4 h-4" />
             Eraser
           </button>
           <button
+            onClick={() => handleChange('mode', 'curve')}
+            className={`flex-1 min-w-[3rem] flex flex-col items-center justify-center gap-1 py-2 rounded text-[10px] font-medium transition-colors ${brush.mode === 'curve' ? 'bg-purple-600 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700'}`}
+          >
+            <IconTarget className="w-4 h-4" />
+            Curve
+          </button>
+          <button
             onClick={onFillLayer}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 py-2 rounded text-[10px] font-medium transition-colors text-neutral-400 hover:text-white hover:bg-neutral-700`}
+            className={`flex-1 min-w-[3rem] flex flex-col items-center justify-center gap-1 py-2 rounded text-[10px] font-medium transition-colors text-neutral-400 hover:text-white hover:bg-neutral-700`}
           >
             <IconBucket className="w-4 h-4" />
             Fill
@@ -188,7 +197,40 @@ const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil,
         </div>
       </div>
 
-      {/* Brush Mode */}
+      {/* Curve Specific Controls */}
+      {brush.mode === 'curve' && (
+        <div className="space-y-2 bg-neutral-800 p-2 rounded border border-neutral-700 border-l-4 border-l-purple-500">
+             <div className="flex justify-between items-center text-xs text-neutral-400 mb-2">
+                 <span className="font-bold text-purple-400">Curve Tools</span>
+                 <span>{curvePointsCount} pts</span>
+             </div>
+             
+             <div className="flex gap-2">
+                 <button 
+                    onClick={() => eventBus.emit(Events.CMD_CURVE_STROKE)}
+                    className="flex-1 py-1.5 bg-neutral-700 hover:bg-neutral-600 rounded text-xs text-white border border-neutral-600"
+                    disabled={curvePointsCount < 2}
+                 >
+                    Stroke
+                 </button>
+                 <button 
+                    onClick={() => eventBus.emit(Events.CMD_CURVE_FILL)}
+                    className="flex-1 py-1.5 bg-neutral-700 hover:bg-neutral-600 rounded text-xs text-white border border-neutral-600"
+                    disabled={curvePointsCount < 3}
+                 >
+                    Fill
+                 </button>
+             </div>
+             <button 
+                onClick={() => eventBus.emit(Events.CMD_CURVE_CLEAR)}
+                className="w-full py-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded text-xs mt-1"
+             >
+                Clear Curve
+             </button>
+        </div>
+      )}
+
+      {/* Brush Mode (Std/Air) - Hide in Curve mode if desired, but curve stroke might use it */}
       <div className="flex bg-neutral-800 p-1 rounded-lg border border-neutral-700">
         <button
           onClick={() => handleChange('isAirbrush', false)}

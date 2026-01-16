@@ -1,10 +1,11 @@
+
 import React, { useRef, useMemo, useEffect, useState, useCallback, useImperativeHandle, forwardRef, Suspense } from 'react';
 import { Canvas, useThree, useFrame, createPortal, ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Environment, useCursor, useTexture, Line, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
-import { BrushSettings, Layer, StencilSettings, AxisWidgetSettings } from '../types';
+import { BrushSettings, Layer, StencilSettings, AxisWidgetSettings, Vec3 } from '../types';
 import { TEXTURE_SIZE } from '../constants';
-import { Vec3, Vec3Utils, Vec2, Vec2Utils, TMP_VEC2_1, GridUtils, MeshUtils } from '../services/math';
+import { Vec3Utils, Vec2, Vec2Utils, TMP_VEC2_1, GridUtils, MeshUtils } from '../services/math';
 import { BrushAPI } from '../services/brushService';
 import { StencilAPI } from '../services/stencilService';
 import { eventBus, Events } from '../services/eventBus';
@@ -30,6 +31,8 @@ declare module 'react' {
       lineBasicMaterial: any;
       color: any;
       canvasTexture: any;
+      instancedMesh: any;
+      boxGeometry: any;
     }
   }
 }
@@ -42,6 +45,8 @@ interface SceneProps {
   stencil: StencilSettings;
   setStencil?: any; 
   axisWidget: AxisWidgetSettings;
+  curvePoints?: Vec3[];
+  setCurvePoints?: React.Dispatch<React.SetStateAction<Vec3[]>>;
 }
 
 export interface ProjectionBakerHandle {
@@ -129,6 +134,72 @@ const CornerHandle = ({
       <meshBasicMaterial color={selected ? "#ffff00" : "#00ff00"} depthTest={false} transparent opacity={0.8} />
     </mesh>
   );
+};
+
+// ------------------------------------------------------------------
+// CURVE OVERLAY
+// ------------------------------------------------------------------
+const CurveOverlay = ({ points, onPointDown }: { points: Vec3[], onPointDown: (idx: number, e: ThreeEvent<PointerEvent>) => void }) => {
+    const path = useMemo(() => {
+        if (points.length < 2) return null;
+        const curvePath = new THREE.CurvePath<THREE.Vector3>();
+        const offset = 0.05; 
+        const project = (v: Vec3) => new THREE.Vector3(v.x, v.y, v.z).normalize().multiplyScalar(2.0 + offset);
+
+        for (let i = 0; i < points.length - 3; i += 3) {
+            curvePath.add(new THREE.CubicBezierCurve3(
+                project(points[i]),
+                project(points[i+1]),
+                project(points[i+2]),
+                project(points[i+3])
+            ));
+        }
+        return curvePath;
+    }, [points]);
+
+    const linePoints = useMemo(() => {
+        if (!path || path.curves.length === 0) return null;
+        return path.getPoints(Math.max(100, path.curves.length * 50));
+    }, [path]);
+    
+    // Visualize Controls
+    const handles = useMemo(() => {
+        return points.map((p, i) => {
+             const isAnchor = i % 3 === 0;
+             const pos = new THREE.Vector3(p.x, p.y, p.z).normalize().multiplyScalar(2.0 + 0.05);
+             return (
+                 <mesh 
+                   key={i} 
+                   position={pos} 
+                   onClick={(e) => e.stopPropagation()}
+                   onPointerDown={(e) => { e.stopPropagation(); onPointDown(i, e); }}
+                 >
+                     <boxGeometry args={[isAnchor ? 0.08 : 0.05, isAnchor ? 0.08 : 0.05, isAnchor ? 0.08 : 0.05]} />
+                     <meshBasicMaterial color={isAnchor ? '#ffff00' : '#00ffff'} depthTest={false} />
+                 </mesh>
+             );
+        });
+    }, [points, onPointDown]);
+
+    // Visualize Control Lines
+    const controlLines = useMemo(() => {
+        const lines = [];
+        const project = (v: Vec3) => new THREE.Vector3(v.x, v.y, v.z).normalize().multiplyScalar(2.05);
+        for(let i=0; i < points.length - 1; i++) {
+            // Draw lines between Anchor and its Control points
+            if (i % 3 === 0 && i+1 < points.length) lines.push([project(points[i]), project(points[i+1])]); // Anchor -> Next Control
+            if (i % 3 === 2 && i+1 < points.length) lines.push([project(points[i]), project(points[i+1])]); // Prev Control -> Anchor
+        }
+        return lines;
+    }, [points]);
+
+    return (
+        <group>
+            {linePoints && <Line points={linePoints} color="white" lineWidth={2} depthTest={false} transparent opacity={0.8} />}
+            {handles}
+            {controlLines.map((pts, i) => <Line key={`cl-${i}`} points={pts} color="#444" lineWidth={1} depthTest={false} transparent opacity={0.5} dashed />)}
+        </group>
+    );
 };
 
 // ------------------------------------------------------------------
@@ -599,7 +670,7 @@ const ProjectionBaker = forwardRef<ProjectionBakerHandle, any>(({ stencil, meshG
 });
 
 const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAltPressed: boolean }> = ({ 
-  brush, layers, activeLayerId, stencil, setStencil, isAltPressed 
+  brush, layers, activeLayerId, stencil, setStencil, isAltPressed, curvePoints, setCurvePoints 
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const [hovered, setHover] = useState(false);
@@ -613,6 +684,9 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
   const stencilMeshRef = useRef<THREE.Group>(null);
   const bakerRef = useRef<ProjectionBakerHandle>(null);
   
+  // Curve Drag State
+  const [draggingCurveIdx, setDraggingCurveIdx] = useState<number | null>(null);
+
   const [lutTexture, setLutTexture] = useState<THREE.Texture | null>(null);
   const [lutBounds, setLutBounds] = useState(new THREE.Vector4());
 
@@ -633,6 +707,43 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
           };
       });
   }, [setStencil]);
+
+  // Curve Logic Helper
+  const addCurvePoint = useCallback((p: THREE.Vector3) => {
+     if (!setCurvePoints || !curvePoints) return;
+     const pt: Vec3 = { x: p.x, y: p.y, z: p.z };
+     
+     if (curvePoints.length === 0) {
+         setCurvePoints([pt]);
+     } else {
+         const lastAnchor = new THREE.Vector3(curvePoints[curvePoints.length-1].x, curvePoints[curvePoints.length-1].y, curvePoints[curvePoints.length-1].z);
+         const newPoint = p;
+         const c1 = new THREE.Vector3().lerpVectors(lastAnchor, newPoint, 0.33);
+         const c2 = new THREE.Vector3().lerpVectors(lastAnchor, newPoint, 0.66);
+         setCurvePoints(prev => [...prev, {x:c1.x,y:c1.y,z:c1.z}, {x:c2.x,y:c2.y,z:c2.z}, pt]);
+     }
+  }, [curvePoints, setCurvePoints]);
+
+  const updateCurvePoint = useCallback((idx: number, p: THREE.Vector3) => {
+      if (!setCurvePoints || !curvePoints) return;
+      const pts = [...curvePoints];
+      const old = new THREE.Vector3(pts[idx].x, pts[idx].y, pts[idx].z);
+      const delta = p.clone().sub(old);
+      pts[idx] = { x: p.x, y: p.y, z: p.z };
+
+      // Anchor Move Logic
+      if (idx % 3 === 0) {
+         if (idx - 1 >= 0) {
+            const prev = new THREE.Vector3(pts[idx-1].x, pts[idx-1].y, pts[idx-1].z).add(delta);
+            pts[idx-1] = { x: prev.x, y: prev.y, z: prev.z };
+         }
+         if (idx + 1 < pts.length) {
+            const next = new THREE.Vector3(pts[idx+1].x, pts[idx+1].y, pts[idx+1].z).add(delta);
+            pts[idx+1] = { x: next.x, y: next.y, z: next.z };
+         }
+      }
+      setCurvePoints(pts);
+  }, [curvePoints, setCurvePoints]);
 
   useEffect(() => {
     const handleBakeRequest = (data: { layerId: string }) => {
@@ -660,12 +771,78 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
         
         compositeDirtyRef.current = true;
     };
+    
+    // Curve Rasterization
+    const handleCurveStroke = () => bakeCurve('stroke');
+    const handleCurveFill = () => bakeCurve('fill');
 
-    const handleCompositeUpdate = () => { compositeDirtyRef.current = true; };
     const unsubBake = eventBus.on(Events.REQ_BAKE_PROJECTION, handleBakeRequest);
-    const unsubComp = eventBus.on(Events.REFRESH_COMPOSITE, handleCompositeUpdate);
-    return () => { unsubBake(); unsubComp(); };
-  }, [layers]); 
+    const unsubStroke = eventBus.on(Events.CMD_CURVE_STROKE, handleCurveStroke);
+    const unsubFill = eventBus.on(Events.CMD_CURVE_FILL, handleCurveFill);
+    const unsubComp = eventBus.on(Events.REFRESH_COMPOSITE, () => { compositeDirtyRef.current = true; });
+
+    return () => { unsubBake(); unsubStroke(); unsubFill(); unsubComp(); };
+  }, [layers, curvePoints, activeLayerId]); 
+
+  // Curve Baking Logic
+  const bakeCurve = useCallback((type: 'stroke' | 'fill') => {
+      if (!curvePoints || curvePoints.length < 2) return;
+      const layer = layers.find(l => l.id === activeLayerId);
+      if (!layer) return;
+
+      const path = new THREE.CurvePath<THREE.Vector3>();
+      const offset = 0.0; // Bake directly on surface
+      const project = (v: Vec3) => new THREE.Vector3(v.x, v.y, v.z).normalize().multiplyScalar(2.0 + offset);
+
+      for (let i = 0; i < curvePoints.length - 3; i += 3) {
+          path.add(new THREE.CubicBezierCurve3(
+              project(curvePoints[i]),
+              project(curvePoints[i+1]),
+              project(curvePoints[i+2]),
+              project(curvePoints[i+3])
+          ));
+      }
+
+      const subdivisions = Math.max(200, path.curves.length * 50);
+      const points = path.getPoints(subdivisions);
+
+      const toUV = (n: THREE.Vector3) => {
+          // Normal is position normalized
+          const norm = n.clone().normalize();
+          const u = 0.5 + Math.atan2(norm.z, norm.x) / (2 * Math.PI);
+          const v = 0.5 + Math.asin(norm.y) / Math.PI;
+          return new THREE.Vector2(u, v);
+      };
+
+      if (type === 'stroke') {
+          // Reuse paintStroke logic but force single stamp
+          points.forEach(p => {
+              const uv = toUV(p);
+              paintStroke(uv, true); // true = force single stamp logic? Actually paintStroke handles logic.
+              // We need to simulate a continuous stroke. 
+              // paintStroke uses accumulation logic. 
+              // We can reset accumulator and call paintStroke sequentially.
+          });
+          // Reset stroke state
+          lastUVRef.current = null;
+          distanceAccumulatorRef.current = 0;
+      } else {
+          // Fill
+          const uvPoints = points.map(toUV);
+          layer.ctx.fillStyle = brush.color;
+          layer.ctx.globalAlpha = brush.opacity;
+          layer.ctx.globalCompositeOperation = 'source-over';
+          layer.ctx.beginPath();
+          layer.ctx.moveTo(uvPoints[0].x * TEXTURE_SIZE, (1 - uvPoints[0].y) * TEXTURE_SIZE);
+          for(let i=1; i<uvPoints.length; i++) {
+              layer.ctx.lineTo(uvPoints[i].x * TEXTURE_SIZE, (1 - uvPoints[i].y) * TEXTURE_SIZE);
+          }
+          layer.ctx.closePath();
+          layer.ctx.fill();
+          compositeDirtyRef.current = true;
+      }
+
+  }, [curvePoints, activeLayerId, layers, brush]);
 
   useEffect(() => { compositeDirtyRef.current = true; }, [layers]);
 
@@ -764,13 +941,13 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
       ctx.restore();
   }, [brush]);
   
-  const paintStroke = useCallback((uv: THREE.Vector2) => {
+  const paintStroke = useCallback((uv: THREE.Vector2, force: boolean = false) => {
      const layer = layers.find(l => l.id === activeLayerId);
      if (!layer) return;
      const currentX = uv.x * TEXTURE_SIZE;
      const currentY = (1 - uv.y) * TEXTURE_SIZE;
      const currentVec = Vec2Utils.create(currentX, currentY);
-     if (!lastUVRef.current) {
+     if (!lastUVRef.current || force) {
         drawStamp(layer.ctx, currentX, currentY);
         lastUVRef.current = currentVec;
         compositeDirtyRef.current = true;
@@ -794,6 +971,19 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
 
   const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
      if (isAltPressed) return;
+     if (gizmoDragging) return;
+
+     if (brush.mode === 'curve') {
+        // Curve Logic: If we hit handle, it's handled by CurveOverlay via stopPropagation. 
+        // If we reach here, we are clicking the mesh -> Add point.
+        if (e.point) {
+            // Normalize to surface (Radius 2)
+            const p = e.point.clone().normalize().multiplyScalar(2.0);
+            addCurvePoint(p);
+        }
+        return;
+     }
+
      if (!isInteractingWithStencil && !isStencilEditMode && e.uv) {
         eventBus.emit(Events.PAINT_START, { layerId: activeLayerId, tool: brush.mode, uv: e.uv });
         isPaintingRef.current = true;
@@ -806,12 +996,27 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
 
   const handlePointerMove = (e: ThreeEvent<PointerEvent>) => {
      if (isAltPressed) return;
+     if (gizmoDragging) return;
+
+     if (brush.mode === 'curve') {
+         if (draggingCurveIdx !== null && e.point) {
+             const p = e.point.clone().normalize().multiplyScalar(2.0);
+             updateCurvePoint(draggingCurveIdx, p);
+         }
+         return;
+     }
+
      if (isPaintingRef.current && !isInteractingWithStencil && !isStencilEditMode && e.uv) {
         paintStroke(e.uv);
      }
   };
 
   const handlePointerUp = (e: ThreeEvent<PointerEvent>) => {
+     if (draggingCurveIdx !== null) {
+         setDraggingCurveIdx(null);
+         return;
+     }
+
      if (isPaintingRef.current) {
         eventBus.emit(Events.PAINT_END, { layerId: activeLayerId });
      }
@@ -833,6 +1038,14 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
         <sphereGeometry args={[2, 64, 64]} /> 
         <meshStandardMaterial map={compositeTexture} roughness={0.5} metalness={0.1} transparent={true} />
       </mesh>
+
+      {/* Curve Overlay */}
+      {brush.mode === 'curve' && curvePoints && (
+          <CurveOverlay 
+            points={curvePoints} 
+            onPointDown={(idx) => setDraggingCurveIdx(idx)} 
+          />
+      )}
 
       {stencil.visible && stencil.image && (
         <Suspense fallback={null}>

@@ -1,3 +1,6 @@
+
+export interface Vec3 { x: number; y: number; z: number; }
+
 export interface BrushSettings {
   color: string;
   size: number;
@@ -9,7 +12,7 @@ export interface BrushSettings {
   isAirbrush: boolean; // Toggle for Airbrush mode
   maskImage: string | null; // Base64 data URL for the brush tip shape
   textureMix: number; // 0 = Use Brush Color (Tint), 1 = Use Texture Color
-  mode: 'paint' | 'erase';
+  mode: 'paint' | 'erase' | 'curve';
   rotation: number;       // Base rotation in degrees
   rotationJitter: number; // Random rotation variation (0-1)
   positionJitter: number; // Random position scattering (0-1 relative to size)
