@@ -41,6 +41,12 @@ export interface StencilSettings {
   colCuts: number[]; // Ordered normalized values (0..1) defining vertical cuts
 }
 
+export interface AxisWidgetSettings {
+  visible: boolean;
+  alignment: 'top-left' | 'top-right' | 'bottom-right' | 'bottom-left' | 'bottom-center' | 'center-right' | 'center-left' | 'center-center' | 'top-center';
+  margin: [number, number];
+}
+
 export interface HistoryState {
   // Simplified history for undo/redo could go here, 
   // but for now we focus on layers and painting.

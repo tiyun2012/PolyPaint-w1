@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Scene from './components/Scene';
 import Toolbar from './components/Toolbar';
 import LayerManager from './components/LayerManager';
-import { BrushSettings, Layer, StencilSettings } from './types';
+import { BrushSettings, Layer, StencilSettings, AxisWidgetSettings } from './types';
 import { INITIAL_BRUSH } from './constants';
 import { LayerAPI } from './services/layerService';
 import { StencilAPI } from './services/stencilService';
@@ -15,6 +15,13 @@ function App() {
   
   // Stencil State
   const [stencil, setStencil] = useState<StencilSettings>(StencilAPI.getDefaults());
+
+  // Axis Widget State (API to displace/place)
+  const [axisWidget, setAxisWidget] = useState<AxisWidgetSettings>({
+    visible: true,
+    alignment: 'bottom-left',
+    margin: [80, 80]
+  });
 
   // Initialize first layer
   useEffect(() => {
@@ -107,6 +114,8 @@ function App() {
          setBrush={setBrush} 
          stencil={stencil}
          setStencil={setStencil}
+         axisWidget={axisWidget}
+         setAxisWidget={setAxisWidget}
          onFillLayer={handleFillLayer}
       />
       
@@ -117,7 +126,8 @@ function App() {
           setLayers={setLayers}
           activeLayerId={activeLayerId}
           stencil={stencil}
-          setStencil={setStencil} 
+          setStencil={setStencil}
+          axisWidget={axisWidget}
         />
         
         {/* Info Overlay */}

@@ -1,13 +1,14 @@
 import React, { useRef, useMemo, useEffect, useState, useCallback, useImperativeHandle, forwardRef, Suspense } from 'react';
 import { Canvas, useThree, useFrame, createPortal, ThreeEvent } from '@react-three/fiber';
-import { OrbitControls, Environment, useCursor, TransformControls, useTexture, Line } from '@react-three/drei';
+import { OrbitControls, Environment, useCursor, useTexture, Line, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
-import { BrushSettings, Layer, StencilSettings } from '../types';
+import { BrushSettings, Layer, StencilSettings, AxisWidgetSettings } from '../types';
 import { TEXTURE_SIZE } from '../constants';
-import { Vec3, Vec3Utils, Vec2, Vec2Utils, TMP_VEC2_1 } from '../services/math';
+import { Vec3, Vec3Utils, Vec2, Vec2Utils, TMP_VEC2_1, GridUtils, MeshUtils } from '../services/math';
 import { BrushAPI } from '../services/brushService';
 import { StencilAPI } from '../services/stencilService';
 import { eventBus, Events } from '../services/eventBus';
+import { Gizmo } from './Gizmo';
 
 // Add TypeScript definitions for React Three Fiber elements
 declare module 'react' {
@@ -27,6 +28,7 @@ declare module 'react' {
       lineSegments: any;
       lineBasicMaterial: any;
       color: any;
+      canvasTexture: any;
     }
   }
 }
@@ -38,6 +40,11 @@ interface SceneProps {
   setLayers: React.Dispatch<React.SetStateAction<Layer[]>>;
   stencil: StencilSettings;
   setStencil?: any; 
+  axisWidget: AxisWidgetSettings;
+}
+
+export interface ProjectionBakerHandle {
+  bake: () => ImageData | null;
 }
 
 // ------------------------------------------------------------------
@@ -143,7 +150,6 @@ const StencilPlane = forwardRef<THREE.Group, {
   const texture = useTexture(image);
   const { gl } = useThree();
   const groupRef = useRef<THREE.Group>(null!);
-  const meshRef = useRef<THREE.Mesh>(null!);
   const proxyRef = useRef<THREE.Group>(null!); 
   
   useImperativeHandle(ref, () => groupRef.current);
@@ -151,13 +157,10 @@ const StencilPlane = forwardRef<THREE.Group, {
   // ------------------------------------------------------------------
   // GRID STATE
   // ------------------------------------------------------------------
-  const [gridPoints, setGridPoints] = useState<Vec3[][]>(() => {
-    // Initial 2x2 grid. Order: Bottom Row (v=0) to Top Row (v=1)
-    return [
-      [Vec3Utils.create(-0.5 * aspectRatio, -0.5, 0), Vec3Utils.create(0.5 * aspectRatio, -0.5, 0)], // Bottom
-      [Vec3Utils.create(-0.5 * aspectRatio, 0.5, 0), Vec3Utils.create(0.5 * aspectRatio, 0.5, 0)]   // Top
-    ];
-  });
+  // Use GridUtils to initialize grid
+  const [gridPoints, setGridPoints] = useState<Vec3[][]>(() => 
+    GridUtils.create(2, 2, aspectRatio, 1.0)
+  );
   
   const [selectedPoint, setSelectedPoint] = useState<{r: number, c: number} | null>(null);
   const [hoverLoop, setHoverLoop] = useState<{ type: 'row' | 'col', value: number } | null>(null);
@@ -165,7 +168,6 @@ const StencilPlane = forwardRef<THREE.Group, {
   // ------------------------------------------------------------------
   // LUT GENERATION RESOURCES
   // ------------------------------------------------------------------
-  // Increased LUT Size to 1024 for smoother curve mapping
   const lutFBO = useMemo(() => new THREE.WebGLRenderTarget(1024, 1024, { 
       minFilter: THREE.LinearFilter, 
       magFilter: THREE.LinearFilter, 
@@ -194,217 +196,89 @@ const StencilPlane = forwardRef<THREE.Group, {
   // ------------------------------------------------------------------
   // GEOMETRY GENERATION
   // ------------------------------------------------------------------
-  const geometry = useMemo(() => {
-     const geo = new THREE.BufferGeometry();
-     
-     const vertexCount = rowCuts.length * colCuts.length;
-     const positions = new Float32Array(vertexCount * 3);
-     const uvs = new Float32Array(vertexCount * 2);
-     const indices: number[] = [];
-     
-     for (let r = 0; r < rowCuts.length - 1; r++) {
-       for (let c = 0; c < colCuts.length - 1; c++) {
-          const iBL = r * colCuts.length + c;
-          const iBR = r * colCuts.length + (c + 1);
-          const iTL = (r + 1) * colCuts.length + c;
-          const iTR = (r + 1) * colCuts.length + (c + 1);
-          
-          indices.push(iBL, iBR, iTL);
-          indices.push(iBR, iTR, iTL);
-       }
-     }
-     
-     geo.setIndex(indices);
-     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-     geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-     
-     return geo;
-  }, [rowCuts.length, colCuts.length]);
+  const geometry = useMemo(() => new THREE.BufferGeometry(), [rowCuts.length, colCuts.length]); // Recreate if topology changes
+
+  // Update Geometry BufferAttributes from MeshUtils
+  useEffect(() => {
+      const { positions, uvs, indices } = MeshUtils.generateGridMesh(gridPoints, rowCuts, colCuts);
+      geometry.setIndex(indices);
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+      geometry.computeVertexNormals();
+      
+      // Correct property access for BufferAttribute update
+      (geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+      (geometry.attributes.uv as THREE.BufferAttribute).needsUpdate = true;
+
+  }, [geometry, gridPoints, rowCuts, colCuts]);
 
   // ------------------------------------------------------------------
   // QUAD WIREFRAME GEOMETRY (Visual Only)
   // ------------------------------------------------------------------
   const wireframeGeometry = useMemo(() => {
-      const positions: number[] = [];
-      const rows = gridPoints.length;
-      if (rows === 0) return new THREE.BufferGeometry();
-      const cols = gridPoints[0].length;
-
-      // Horizontal Lines (Rows)
-      for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols - 1; c++) {
-              positions.push(gridPoints[r][c].x, gridPoints[r][c].y, 0);
-              positions.push(gridPoints[r][c+1].x, gridPoints[r][c+1].y, 0);
-          }
-      }
-
-      // Vertical Lines (Cols)
-      for (let c = 0; c < cols; c++) {
-          for (let r = 0; r < rows - 1; r++) {
-              positions.push(gridPoints[r][c].x, gridPoints[r][c].y, 0);
-              positions.push(gridPoints[r+1][c].x, gridPoints[r+1][c].y, 0);
-          }
-      }
-
+      const positions = GridUtils.getWireframeVertices(gridPoints);
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       return geo;
   }, [gridPoints]);
 
   // ------------------------------------------------------------------
-  // PREVIEW LOOP CURVE CALCULATION
-  // ------------------------------------------------------------------
-  const previewLoopPoints = useMemo(() => {
-      if (!hoverLoop) return null;
-      const { type, value } = hoverLoop;
-      const points: Vec3[] = [];
-
-      if (type === 'row') {
-          // Find where this V falls
-          let insertIndex = 0;
-          while (insertIndex < rowCuts.length && rowCuts[insertIndex] < value) insertIndex++;
-          const prevRowIdx = Math.max(0, insertIndex - 1);
-          const nextRowIdx = Math.min(rowCuts.length - 1, insertIndex);
-          const vPrev = rowCuts[prevRowIdx];
-          const vNext = rowCuts[nextRowIdx];
-          
-          let t = 0.5;
-          if (vNext > vPrev) t = (value - vPrev) / (vNext - vPrev);
-
-          // Interpolate across all columns to get a curve
-          const cols = gridPoints[0].length;
-          for (let c = 0; c < cols; c++) {
-              const pA = gridPoints[prevRowIdx][c];
-              const pB = gridPoints[nextRowIdx][c];
-              const p = Vec3Utils.lerp(pA, pB, t, Vec3Utils.create());
-              p.z = 0.05; // Slightly in front
-              points.push(p);
-          }
-
-      } else {
-          // Col cut
-          let insertIndex = 0;
-          while (insertIndex < colCuts.length && colCuts[insertIndex] < value) insertIndex++;
-          const prevColIdx = Math.max(0, insertIndex - 1);
-          const nextColIdx = Math.min(colCuts.length - 1, insertIndex);
-          const uPrev = colCuts[prevColIdx];
-          const uNext = colCuts[nextColIdx];
-          
-          let t = 0.5;
-          if (uNext > uPrev) t = (value - uPrev) / (uNext - uPrev);
-
-          const rows = gridPoints.length;
-          for (let r = 0; r < rows; r++) {
-              const pA = gridPoints[r][prevColIdx];
-              const pB = gridPoints[r][nextColIdx];
-              const p = Vec3Utils.lerp(pA, pB, t, Vec3Utils.create());
-              p.z = 0.05;
-              points.push(p);
-          }
-      }
-      return points;
-  }, [hoverLoop, gridPoints, rowCuts, colCuts]);
-
-  // ------------------------------------------------------------------
   // LOOP ADDITION LOGIC
   // ------------------------------------------------------------------
   const handleInternalAddLoop = (type: 'row' | 'col', val: number) => {
-      const newPoints = gridPoints.map(row => row.map(v => Vec3Utils.clone(v)));
-      
+      let newGrid;
       if (type === 'row') {
+          // Find insertion index
           let insertIndex = 0;
-          while (insertIndex < rowCuts.length && rowCuts[insertIndex] < val) {
-              insertIndex++;
-          }
-          
+          while (insertIndex < rowCuts.length && rowCuts[insertIndex] < val) insertIndex++;
           const prevRowIdx = Math.max(0, insertIndex - 1);
           const nextRowIdx = Math.min(rowCuts.length - 1, insertIndex);
           const vPrev = rowCuts[prevRowIdx];
           const vNext = rowCuts[nextRowIdx];
           
           let t = 0.5;
-          if (vNext > vPrev) {
-             t = (val - vPrev) / (vNext - vPrev);
-          }
+          if (vNext > vPrev) t = (val - vPrev) / (vNext - vPrev);
           
-          const newRowPoints: Vec3[] = [];
-          for (let c = 0; c < colCuts.length; c++) {
-              const pA = gridPoints[prevRowIdx][c];
-              const pB = gridPoints[nextRowIdx][c];
-              if (pA && pB) {
-                const interpolated = Vec3Utils.lerp(pA, pB, t, Vec3Utils.create());
-                newRowPoints.push(interpolated);
-              } else {
-                 newRowPoints.push(Vec3Utils.create()); 
-              }
-          }
-          newPoints.splice(insertIndex, 0, newRowPoints);
+          // Use GridUtils to insert row
+          // NOTE: GridUtils.insertRow expects index of 'previous' row to interpolate FROM.
+          // Since insertIndex is where the NEW cut will go in the CUTS array,
+          // The previous row in grid corresponds to prevRowIdx.
+          newGrid = GridUtils.insertRow(gridPoints, t, prevRowIdx);
       } else {
           let insertIndex = 0;
-          while (insertIndex < colCuts.length && colCuts[insertIndex] < val) {
-              insertIndex++;
-          }
+          while (insertIndex < colCuts.length && colCuts[insertIndex] < val) insertIndex++;
           const prevColIdx = Math.max(0, insertIndex - 1);
           const nextColIdx = Math.min(colCuts.length - 1, insertIndex);
           const uPrev = colCuts[prevColIdx];
           const uNext = colCuts[nextColIdx];
           
           let t = 0.5;
-          if (uNext > uPrev) {
-             t = (val - uPrev) / (uNext - uPrev);
-          }
+          if (uNext > uPrev) t = (val - uPrev) / (uNext - uPrev);
           
-          for (let r = 0; r < gridPoints.length; r++) {
-              const pA = gridPoints[r][prevColIdx];
-              const pB = gridPoints[r][nextColIdx];
-              if (pA && pB) {
-                 const pNew = Vec3Utils.lerp(pA, pB, t, Vec3Utils.create());
-                 newPoints[r].splice(insertIndex, 0, pNew);
-              }
-          }
+          newGrid = GridUtils.insertCol(gridPoints, t, prevColIdx);
       }
-      setGridPoints(newPoints);
+      
+      setGridPoints(newGrid);
       onAddLoop(type, val);
   };
 
   // ------------------------------------------------------------------
-  // UPDATE GEOMETRY & RENDER LUT
+  // UPDATE LUT
   // ------------------------------------------------------------------
-  const isGeometryValid = gridPoints.length === rowCuts.length && gridPoints[0]?.length === colCuts.length;
-
   useEffect(() => {
-     if (!isGeometryValid) return;
+     // Wait for attributes to populate
+     if (!geometry.attributes.position) return;
 
-     const posAttr = geometry.attributes.position;
-     const uvAttr = geometry.attributes.uv;
-     
-     // 1. Update Geometry Positions
+     // Calculate Bounds
      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
-     for (let r = 0; r < rowCuts.length; r++) {
-       const v = rowCuts[r]; 
-       for (let c = 0; c < colCuts.length; c++) {
-          const u = colCuts[c];
-          const index = r * colCuts.length + c;
-          
-          uvAttr.setXY(index, u, v);
-          
-          const p = gridPoints[r][c];
-          posAttr.setXYZ(index, p.x, p.y, 0);
-          
-          minX = Math.min(minX, p.x);
-          maxX = Math.max(maxX, p.x);
-          minY = Math.min(minY, p.y);
-          maxY = Math.max(maxY, p.y);
-       }
+     for(let r=0; r<gridPoints.length; r++) {
+         for(let c=0; c<gridPoints[r].length; c++) {
+             const p = gridPoints[r][c];
+             minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+             minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+         }
      }
-     
-     posAttr.needsUpdate = true;
-     uvAttr.needsUpdate = true;
-     geometry.computeVertexNormals();
 
-     // 2. Render LUT
-     // We define a margin to ensure we capture points slightly dragged out
      const padding = 0.1;
      const lMinX = minX - padding;
      const lMaxX = maxX + padding;
@@ -433,7 +307,7 @@ const StencilPlane = forwardRef<THREE.Group, {
      // Bounds Vector: MinX, MinY, Width, Height
      onLutUpdate(lutFBO.texture, new THREE.Vector4(lMinX, lMinY, width, height));
 
-  }, [geometry, rowCuts, colCuts, gridPoints, isGeometryValid, gl, lutFBO, lutScene, lutCamera, lutMaterial, onLutUpdate]);
+  }, [geometry, gridPoints, gl, lutFBO, lutScene, lutCamera, lutMaterial, onLutUpdate]);
 
   // ------------------------------------------------------------------
   // GIZMO SYNC
@@ -449,13 +323,12 @@ const StencilPlane = forwardRef<THREE.Group, {
     }
   }, [selectedPoint]); 
 
-  const handleProxyChange = () => {
+  const handleGizmoDrag = () => {
      if (selectedPoint !== null) {
         setGridPoints(prev => {
            const next = prev.map(row => row.map(v => Vec3Utils.clone(v)));
            const {r, c} = selectedPoint;
-           const newPos = proxyRef.current.position; // Keep reading as THREE.Vector3 from TransformControls
-           // Sync back to internal Vec3 state
+           const newPos = proxyRef.current.position; 
            next[r][c] = Vec3Utils.create(newPos.x, newPos.y, 0);
            return next;
         });
@@ -498,72 +371,50 @@ const StencilPlane = forwardRef<THREE.Group, {
       }
   };
 
-  const innerContent = (
-    <group ref={groupRef} position={[0, 0, 2.5]} onClick={handleClick} onPointerMove={handlePointerMove}>
-       <mesh ref={meshRef} geometry={geometry}>
-          <meshBasicMaterial 
-             map={texture} 
-             transparent={true} 
-             opacity={opacity * 0.7} 
-             side={THREE.DoubleSide}
-             depthTest={false}
-          />
-       </mesh>
-
-       {/* Quad Grid Lines (Visual Only) */}
-       {editable && (
-          <lineSegments geometry={wireframeGeometry} renderOrder={9999}>
-             <lineBasicMaterial color="white" depthTest={false} transparent opacity={0.4} />
-          </lineSegments>
-       )}
-       
-       <group ref={proxyRef} visible={false} />
-       
-       {editable && tool === 'select' && gridPoints.map((row, r) => 
-           row.map((pos, c) => (
-             <CornerHandle 
-               key={`${r}-${c}`}
-               position={[pos.x, pos.y, pos.z]} // Convert internal Vec3 to [x,y,z] for R3F
-               selected={selectedPoint?.r === r && selectedPoint?.c === c}
-               onSelect={(e) => setSelectedPoint({r, c})}
-               visible={true}
-             />
-           ))
-       )}
-       
-       {/* Deformed Loop Hint */}
-       {editable && tool === 'loop' && hoverLoop && previewLoopPoints && (
-          <Line
-             points={previewLoopPoints.map(p => [p.x, p.y, p.z])} // Convert Vec3[] to [x,y,z][]
-             color={hoverLoop.type === 'row' ? 'yellow' : 'cyan'} 
-             lineWidth={3} depthTest={false} renderOrder={9999}
-          />
-       )}
-    </group>
-  );
-
-  if (editable && tool === 'select') {
-     return (
-       <>
-         {innerContent}
-         {selectedPoint !== null ? (
-            <TransformControls 
-               object={proxyRef.current} mode="translate" space="local" size={0.3}
-               // @ts-ignore
-               onDraggingChanged={(e: any) => onDragChange(e.value)} onChange={handleProxyChange}
+  return (
+    <>
+      <group ref={groupRef} position={[0, 0, 2.5]} onClick={handleClick} onPointerMove={handlePointerMove}>
+         <mesh geometry={geometry}>
+            <meshBasicMaterial 
+               map={texture} 
+               transparent={true} 
+               opacity={opacity * 0.7} 
+               side={THREE.DoubleSide}
+               depthTest={false}
             />
-         ) : (
-            <TransformControls 
-               object={groupRef.current} mode={mode} space="local" size={0.6}
-               // @ts-ignore
-               onDraggingChanged={(e: any) => onDragChange(e.value)}
-            />
+         </mesh>
+
+         {editable && (
+            <lineSegments geometry={wireframeGeometry} renderOrder={9999}>
+               <lineBasicMaterial color="white" depthTest={false} transparent opacity={0.4} />
+            </lineSegments>
          )}
-       </>
-     );
-  }
-
-  return innerContent;
+         
+         <group ref={proxyRef} visible={false} />
+         
+         {editable && tool === 'select' && gridPoints.map((row, r) => 
+             row.map((pos, c) => (
+               <CornerHandle 
+                 key={`${r}-${c}`}
+                 position={[pos.x, pos.y, pos.z]} 
+                 selected={selectedPoint?.r === r && selectedPoint?.c === c}
+                 onSelect={(e) => setSelectedPoint({r, c})}
+                 visible={true}
+               />
+             ))
+         )}
+      </group>
+      
+      {editable && tool === 'select' && (
+         <Gizmo 
+           target={selectedPoint !== null ? proxyRef.current : groupRef.current}
+           onDragStart={() => onDragChange(true)}
+           onDragEnd={() => onDragChange(false)}
+           onDrag={handleGizmoDrag}
+         />
+      )}
+    </>
+  );
 });
 
 // ------------------------------------------------------------------
@@ -662,14 +513,12 @@ const ProjectionPreview = ({ stencil, stencilMeshRef, lutTexture, lutBounds }: {
 // ------------------------------------------------------------------
 // PROJECTION BAKER HELPER
 // ------------------------------------------------------------------
-const ProjectionBaker = forwardRef(({ stencil, meshGeometry, stencilObjectRef, lutTexture, lutBounds }: any, ref) => {
+const ProjectionBaker = forwardRef<ProjectionBakerHandle, any>(({ stencil, meshGeometry, stencilObjectRef, lutTexture, lutBounds }, ref) => {
   const { gl } = useThree();
-  // Using samples: 4 for MSAA if supported by browser/device
   const fbo = useMemo(() => new THREE.WebGLRenderTarget(TEXTURE_SIZE, TEXTURE_SIZE, { samples: 4 }), []);
   const scene = useMemo(() => new THREE.Scene(), []);
   const camera = useMemo(() => new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), []);
   
-  // USE useTexture HERE. This ensures texture is loaded before baking.
   const stencilTexture = useTexture(stencil.image!); 
 
   const bakeMaterial = useMemo(() => {
@@ -712,7 +561,6 @@ const ProjectionBaker = forwardRef(({ stencil, meshGeometry, stencilObjectRef, l
              if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
              
              vec4 color = texture2D(stencilTexture, uv);
-             // More tolerant alpha check
              if (color.a < 0.1) discard;
              gl_FragColor = vec4(color.rgb, color.a * opacity);
           }
@@ -725,7 +573,6 @@ const ProjectionBaker = forwardRef(({ stencil, meshGeometry, stencilObjectRef, l
   const triggerBake = useCallback(() => {
      if (!stencilObjectRef.current || !stencilTexture || !lutTexture) return null;
      
-     // Stencil texture already loaded by useTexture
      (stencilTexture as THREE.Texture).colorSpace = THREE.SRGBColorSpace;
      
      const stencilMesh = stencilObjectRef.current;
@@ -771,9 +618,8 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
   const [hovered, setHover] = useState(false);
   const [gizmoDragging, setGizmoDragging] = useState(false);
   
-  // Paint State Refs (Performance: avoid React state for tight loops)
   const isPaintingRef = useRef(false);
-  const lastUVRef = useRef<Vec2 | null>(null); // Use internal Vec2
+  const lastUVRef = useRef<Vec2 | null>(null); 
   const distanceAccumulatorRef = useRef(0);
   const compositeDirtyRef = useRef(false);
 
@@ -781,9 +627,8 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
   const isStencilEditMode = stencil.visible && stencil.mode === 'edit';
 
   const stencilMeshRef = useRef<THREE.Group>(null);
-  const bakerRef = useRef<any>(null);
+  const bakerRef = useRef<ProjectionBakerHandle>(null);
   
-  // LUT STATE
   const [lutTexture, setLutTexture] = useState<THREE.Texture | null>(null);
   const [lutBounds, setLutBounds] = useState(new THREE.Vector4());
 
@@ -805,9 +650,7 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
       });
   }, [setStencil]);
 
-  // Event Listeners for Scene Actions
   useEffect(() => {
-    // Listener for Baking
     const handleBakeRequest = (data: { layerId: string }) => {
         if (!bakerRef.current) return;
         const targetId = data.layerId;
@@ -831,11 +674,9 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
         layer.ctx.drawImage(tempCvs, 0, -TEXTURE_SIZE);
         layer.ctx.restore();
         
-        // Notify that we need a redraw
         compositeDirtyRef.current = true;
     };
 
-    // Listener for Composite Update (e.g. from LayerManager)
     const handleCompositeUpdate = () => {
         compositeDirtyRef.current = true;
     };
@@ -847,12 +688,10 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
         unsubBake();
         unsubComp();
     };
-  }, [layers]); // Re-bind when layers array changes to ensure closure has latest layers
+  }, [layers]); 
 
-  // Trigger composite update when active layer changes or layers are reordered (structural changes handled by React render)
   useEffect(() => { compositeDirtyRef.current = true; }, [layers]);
 
-  // Composite Texture (The Display Texture)
   const compositeCanvas = useMemo(() => {
     const canvas = document.createElement('canvas');
     canvas.width = TEXTURE_SIZE;
@@ -868,9 +707,6 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
     return tex;
   }, [compositeCanvas]);
   
-  // High Performance Loop for Texture Updates
-  // Instead of updating the texture on every mouse move (can be hundreds/sec),
-  // we update it once per frame maximum.
   useFrame(() => {
     if (compositeDirtyRef.current) {
         const ctx = compositeCanvas.getContext('2d');
@@ -888,7 +724,6 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
     }
   });
 
-  // Brush Resources
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const tintCanvasRef = useRef<HTMLCanvasElement | null>(null);
   
@@ -902,14 +737,10 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
      }
   }, [brush.maskImage]);
 
-  // ------------------------------------------------------------------
-  // DRAW STAMP (Single Brush Splat)
-  // ------------------------------------------------------------------
   const drawStamp = useCallback((ctx: CanvasRenderingContext2D, x: number, y: number) => {
       const size = brush.size;
       const radius = size / 2;
       
-      // Jitter calculations
       let posX = x;
       let posY = y;
       if (brush.positionJitter > 0) {
@@ -925,10 +756,8 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
 
       ctx.save();
       
-      // Transform for rotation
       ctx.translate(posX, posY);
       ctx.rotate(angle);
-      // Move back to handle draw offset
       ctx.translate(-posX, -posY);
 
       ctx.globalAlpha = brush.opacity * brush.flow;
@@ -975,17 +804,12 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
           else ctx.fillStyle = '#ffffff'; 
           
           ctx.beginPath(); 
-          // Use a circle for simple brush, but if rotated with scaling (future), need ellipse
-          // Simple circle isn't affected by rotation unless we scale non-uniformly
           ctx.arc(posX, posY, radius, 0, Math.PI*2); 
           ctx.fill();
       }
       ctx.restore();
   }, [brush]);
   
-  // ------------------------------------------------------------------
-  // INTERPOLATED STROKE
-  // ------------------------------------------------------------------
   const paintStroke = useCallback((uv: THREE.Vector2) => {
      const layer = layers.find(l => l.id === activeLayerId);
      if (!layer) return;
@@ -995,7 +819,6 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
      const currentVec = Vec2Utils.create(currentX, currentY);
 
      if (!lastUVRef.current) {
-        // First point of stroke
         drawStamp(layer.ctx, currentX, currentY);
         lastUVRef.current = currentVec;
         compositeDirtyRef.current = true;
@@ -1005,21 +828,15 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
      const dist = Vec2Utils.distance(lastUVRef.current, currentVec);
      const stepSize = Math.max(1, brush.size * brush.spacing);
      
-     // Add distance to accumulator
      distanceAccumulatorRef.current += dist;
 
-     // While we have enough distance to take a step
      while (distanceAccumulatorRef.current >= stepSize) {
-        // Move towards current
-        // TMP_VEC2_1: direction
         Vec2Utils.subtract(currentVec, lastUVRef.current!, TMP_VEC2_1);
         Vec2Utils.normalize(TMP_VEC2_1, TMP_VEC2_1);
         
-        // Scale direction by stepSize (reuse TMP_VEC2_1)
         Vec2Utils.scale(TMP_VEC2_1, stepSize, TMP_VEC2_1);
 
-        // Next Pos
-        const nextPos = Vec2Utils.create(); // Create new vec2 to store path
+        const nextPos = Vec2Utils.create(); 
         Vec2Utils.add(lastUVRef.current!, TMP_VEC2_1, nextPos);
         
         drawStamp(layer.ctx, nextPos.x, nextPos.y);
@@ -1031,13 +848,12 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
      compositeDirtyRef.current = true;
   }, [activeLayerId, layers, drawStamp, brush.spacing, brush.size]);
 
-  // Pointer Handlers
   const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
      if (isAltPressed) return;
      if (!isInteractingWithStencil && !isStencilEditMode && e.uv) {
         eventBus.emit(Events.PAINT_START, { layerId: activeLayerId, tool: brush.mode, uv: e.uv });
         isPaintingRef.current = true;
-        lastUVRef.current = null; // Reset stroke
+        lastUVRef.current = null; 
         distanceAccumulatorRef.current = 0;
         paintStroke(e.uv);
         (e.nativeEvent.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -1074,7 +890,6 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
         <meshStandardMaterial map={compositeTexture} roughness={0.5} metalness={0.1} transparent={true} />
       </mesh>
 
-      {/* STENCIL PROJECTION UI */}
       {stencil.visible && stencil.image && (
         <Suspense fallback={null}>
             <StencilPlane 
@@ -1115,6 +930,7 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
 
 const Scene: React.FC<SceneProps> = (props) => {
   const { isAltPressed, orbitProps } = useMayaControls();
+  const { axisWidget } = props;
 
   return (
     <Canvas
@@ -1127,6 +943,16 @@ const Scene: React.FC<SceneProps> = (props) => {
       <Environment preset="city" />
       
       <OrbitControls {...orbitProps} />
+      
+      {axisWidget.visible && (
+        <GizmoHelper alignment={axisWidget.alignment} margin={axisWidget.margin}>
+          <GizmoViewport 
+            axisColors={['#ff3653', '#8adb00', '#2c8fdf']} 
+            labelColor="black"
+            hideNegativeAxes={false}
+          />
+        </GizmoHelper>
+      )}
       
       <PaintableMesh {...props} isAltPressed={isAltPressed} />
     </Canvas>

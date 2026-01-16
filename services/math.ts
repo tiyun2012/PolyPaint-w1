@@ -1222,6 +1222,148 @@ export const GeometryUtils = {
     }
 };
 
+// ==========================================
+// 12. GRID & MESH TOPOLOGY UTILITIES
+// ==========================================
+
+export const GridUtils = {
+    /**
+     * Creates a new 2D grid of 3D vectors
+     */
+    create: (rows: number, cols: number, width: number, height: number): Vec3[][] => {
+        const grid: Vec3[][] = [];
+        for (let r = 0; r < rows; r++) {
+            const row: Vec3[] = [];
+            const y = (r / Math.max(1, rows - 1)) - 0.5;
+            for (let c = 0; c < cols; c++) {
+                const x = (c / Math.max(1, cols - 1)) - 0.5;
+                row.push({ x: x * width, y: y * height, z: 0 });
+            }
+            grid.push(row);
+        }
+        return grid;
+    },
+
+    /**
+     * Inserts a row into the grid by interpolating between two existing rows.
+     * @param grid The existing grid.
+     * @param t The interpolation factor (0.0 to 1.0) between previous and next row.
+     * @param afterRowIndex The index of the row AFTER which the new row is inserted.
+     */
+    insertRow: (grid: Vec3[][], t: number, afterRowIndex: number): Vec3[][] => {
+        const newGrid = grid.map(row => row.map(v => ({ ...v }))); // Deep copy structure
+        const prevRow = newGrid[afterRowIndex];
+        const nextRow = newGrid[afterRowIndex + 1];
+
+        if (!prevRow || !nextRow) return newGrid;
+
+        const newRow: Vec3[] = [];
+        for (let c = 0; c < prevRow.length; c++) {
+            newRow.push(Vec3Utils.lerp(prevRow[c], nextRow[c], t, Vec3Utils.create()));
+        }
+        
+        newGrid.splice(afterRowIndex + 1, 0, newRow);
+        return newGrid;
+    },
+
+    /**
+     * Inserts a column into the grid by interpolating between two existing columns.
+     */
+    insertCol: (grid: Vec3[][], t: number, afterColIndex: number): Vec3[][] => {
+        const newGrid = grid.map(row => row.map(v => ({ ...v }))); // Deep copy structure
+        
+        for (let r = 0; r < newGrid.length; r++) {
+            const row = newGrid[r];
+            const prev = row[afterColIndex];
+            const next = row[afterColIndex + 1];
+            if (prev && next) {
+                row.splice(afterColIndex + 1, 0, Vec3Utils.lerp(prev, next, t, Vec3Utils.create()));
+            }
+        }
+        return newGrid;
+    },
+
+    /**
+     * Extracts vertex data for rendering wireframe lines of a quad grid
+     */
+    getWireframeVertices: (grid: Vec3[][]): number[] => {
+        const positions: number[] = [];
+        const rows = grid.length;
+        if (rows === 0) return [];
+        const cols = grid[0].length;
+
+        // Horizontal Lines
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols - 1; c++) {
+                const p1 = grid[r][c];
+                const p2 = grid[r][c + 1];
+                positions.push(p1.x, p1.y, p1.z);
+                positions.push(p2.x, p2.y, p2.z);
+            }
+        }
+
+        // Vertical Lines
+        for (let c = 0; c < cols; c++) {
+            for (let r = 0; r < rows - 1; r++) {
+                const p1 = grid[r][c];
+                const p2 = grid[r + 1][c];
+                positions.push(p1.x, p1.y, p1.z);
+                positions.push(p2.x, p2.y, p2.z);
+            }
+        }
+        return positions;
+    }
+};
+
+export const MeshUtils = {
+    /**
+     * Generates a flat array of vertex positions, indices and UVs for a grid mesh.
+     * Assumes standard quad topology based on grid dimensions.
+     */
+    generateGridMesh: (grid: Vec3[][], rowCuts: number[], colCuts: number[]) => {
+        const rows = grid.length;
+        const cols = grid[0].length;
+        const vertexCount = rows * cols;
+        
+        const positions = new Float32Array(vertexCount * 3);
+        const uvs = new Float32Array(vertexCount * 2);
+        const indices: number[] = [];
+
+        // Generate Positions and UVs
+        let ptr = 0;
+        let uvPtr = 0;
+        for (let r = 0; r < rows; r++) {
+            const v = rowCuts[r]; // Map row index to UV V-coordinate
+            for (let c = 0; c < cols; c++) {
+                const u = colCuts[c]; // Map col index to UV U-coordinate
+                
+                const p = grid[r][c];
+                positions[ptr++] = p.x;
+                positions[ptr++] = p.y;
+                positions[ptr++] = p.z;
+                
+                uvs[uvPtr++] = u;
+                uvs[uvPtr++] = v;
+            }
+        }
+
+        // Generate Indices (Two triangles per quad)
+        for (let r = 0; r < rows - 1; r++) {
+            for (let c = 0; c < cols - 1; c++) {
+                const iBL = r * cols + c;
+                const iBR = r * cols + (c + 1);
+                const iTL = (r + 1) * cols + c;
+                const iTR = (r + 1) * cols + (c + 1);
+
+                indices.push(iBL, iBR, iTL);
+                indices.push(iBR, iTR, iTL);
+            }
+        }
+
+        return { positions, uvs, indices };
+    }
+};
+
 export default {
     MathConstants,
     Vec2Utils,
@@ -1232,6 +1374,8 @@ export default {
     RayUtils,
     AABBUtils,
     GeometryUtils,
+    GridUtils,
+    MeshUtils,
     MathUtils,
     Random,
     Easing,

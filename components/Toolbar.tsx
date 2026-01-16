@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { BrushSettings, BrushPreset, StencilSettings } from '../types';
+import { BrushSettings, BrushPreset, StencilSettings, AxisWidgetSettings } from '../types';
 import { PRESET_COLORS, DEFAULT_PRESETS, TIP_LIBRARY } from '../constants';
-import { IconBrush, IconAirbrush, IconSparkles, IconTrash, IconPlus, IconGrid, IconTarget, IconEraser, IconBucket } from './Icons';
+import { IconBrush, IconAirbrush, IconSparkles, IconTrash, IconPlus, IconGrid, IconTarget, IconEraser, IconBucket, IconEye } from './Icons';
 import { BrushAPI } from '../services/brushService';
 import { eventBus, Events } from '../services/eventBus';
 
@@ -12,11 +12,13 @@ interface ToolbarProps {
   setBrush: (b: BrushSettings) => void;
   stencil: StencilSettings;
   setStencil: (s: StencilSettings) => void;
+  axisWidget: AxisWidgetSettings;
+  setAxisWidget: (a: AxisWidgetSettings) => void;
   onFillLayer: () => void;
 }
 
-const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil, onFillLayer }) => {
-  const [activeTab, setActiveTab] = useState<'brush' | 'stencil'>('brush');
+const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil, axisWidget, setAxisWidget, onFillLayer }) => {
+  const [activeTab, setActiveTab] = useState<'brush' | 'stencil' | 'view'>('brush');
   const [presets, setPresets] = useState<BrushPreset[]>(DEFAULT_PRESETS);
   const [isGeneratingMask, setIsGeneratingMask] = useState(false);
   const [showMaskModal, setShowMaskModal] = useState(false);
@@ -458,6 +460,40 @@ const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil,
     </div>
   );
 
+  const renderViewTab = () => (
+    <div className="space-y-5">
+      {/* Axis Widget Section */}
+      <div className="space-y-3">
+        <label className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">Orientation Gizmo</label>
+        
+        <button
+          onClick={() => setAxisWidget({ ...axisWidget, visible: !axisWidget.visible })}
+          className={`w-full py-2 rounded text-xs font-medium border transition-colors ${axisWidget.visible ? 'bg-blue-600 border-blue-500 text-white' : 'bg-neutral-800 border-neutral-700 text-neutral-400'}`}
+        >
+          {axisWidget.visible ? 'Visible' : 'Hidden'}
+        </button>
+
+        <div className="bg-neutral-800 rounded-lg p-3 border border-neutral-700">
+           <label className="text-[10px] text-neutral-400 block mb-2 text-center">Screen Position</label>
+           <div className="grid grid-cols-3 gap-1 w-24 mx-auto">
+              {[
+                'top-left', 'top-center', 'top-right',
+                'center-left', 'center-center', 'center-right',
+                'bottom-left', 'bottom-center', 'bottom-right'
+              ].map((pos) => (
+                 <button
+                   key={pos}
+                   onClick={() => setAxisWidget({ ...axisWidget, alignment: pos as any })}
+                   className={`w-full aspect-square rounded transition-colors ${axisWidget.alignment === pos ? 'bg-blue-500' : 'bg-neutral-700 hover:bg-neutral-600'}`}
+                   title={pos.replace('-', ' ')}
+                 />
+              ))}
+           </div>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="w-64 bg-neutral-900 border-r border-neutral-700 flex flex-col h-full overflow-hidden">
       <div className="p-4 pb-0">
@@ -478,11 +514,19 @@ const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil,
             >
                <IconTarget className="w-4 h-4" /> Projection
             </button>
+            <button
+               onClick={() => setActiveTab('view')}
+               className={`flex-1 pb-2 text-xs font-semibold flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'view' ? 'text-yellow-400 border-yellow-400' : 'text-neutral-500 border-transparent hover:text-neutral-300'}`}
+            >
+               <IconEye className="w-4 h-4" /> View
+            </button>
          </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 pt-4 relative">
-         {activeTab === 'brush' ? renderBrushTab() : renderStencilTab()}
+         {activeTab === 'brush' && renderBrushTab()}
+         {activeTab === 'stencil' && renderStencilTab()}
+         {activeTab === 'view' && renderViewTab()}
       </div>
 
       {/* Modals (Keep outside scroll area if possible or fix z-index) */}
