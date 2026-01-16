@@ -1028,7 +1028,7 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
      if (brush.mode === 'curve') {
         // Curve Logic: If we hit handle, it's handled by CurveOverlay via stopPropagation. 
         // If we reach here, we are clicking the mesh -> Add point.
-        if (e.point) {
+        if (e.shiftKey && e.point) {
             // Normalize to surface (Radius 2)
             const p = e.point.clone().normalize().multiplyScalar(2.0);
             addCurvePoint(p);

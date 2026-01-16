@@ -150,7 +150,7 @@ function App() {
           <p className="mt-1 opacity-70">Alt + Left Drag to Rotate View</p>
           {stencil.visible && stencil.mode === 'edit' && <p className="mt-1 text-green-400">Stencil Edit: {stencil.tool === 'select' ? 'Move Points' : 'Add Loop (Click near edge)'}</p>}
           {stencil.visible && stencil.mode === 'paint' && <p className="mt-1 text-blue-400">Stencil Paint Mode: Ready to Project or Paint</p>}
-          {brush.mode === 'curve' && <p className="mt-1 text-purple-400">Curve Mode: Click to add points. Drag handles to adjust.</p>}
+          {brush.mode === 'curve' && <p className="mt-1 text-purple-400">Curve Mode: Shift + Click to add points. Drag handles to adjust.</p>}
         </div>
       </div>
 
