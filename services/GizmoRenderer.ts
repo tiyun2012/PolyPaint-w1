@@ -19,7 +19,7 @@ type GizmoOffsets = {
  * - Arbitrary Rotation (Matrix4)
  * - Scale
  * - Hover/Active states
- * - Modes: Translate, Rotate
+ * - Modes: Translate, Rotate, Scale
  */
 export class GizmoRenderer {
     private gl: WebGL2RenderingContext | null = null;
@@ -244,7 +244,7 @@ export class GizmoRenderer {
      * @param scale Overall Scale
      * @param hoverAxis Current Hover Axis ID
      * @param activeAxis Current Active Axis ID
-     * @param mode 'translate' | 'rotate'
+     * @param mode 'translate' | 'rotate' | 'scale'
      * @param showModeSwitch If true, renders a small handle to switch modes
      */
     renderGizmos(
@@ -298,13 +298,13 @@ export class GizmoRenderer {
         const ident = () => { mPart.fill(0); mPart[0]=1; mPart[5]=1; mPart[10]=1; mPart[15]=1; };
 
         // Helper to Draw Part
-        const draw = (axis: GizmoHoverAxis, type: 'arrow' | 'plane' | 'sphere' | 'ring' | 'cube', color: number[]) => {
+        const draw = (axis: GizmoHoverAxis, type: 'arrow' | 'plane' | 'sphere' | 'ring' | 'cube' | 'scale_box', color: number[]) => {
              const isHover = hoverAxis === axis;
              const isActive = activeAxis === axis;
              
              ident();
              
-             if (type === 'arrow') {
+             if (type === 'arrow' || type === 'scale_box') {
                  // Geometry is Y-up.
                 if (axis === 'X') {
                     // Rotate Y to X: -90 deg around Z
@@ -319,7 +319,36 @@ export class GizmoRenderer {
                 gl.uniform3fv(uColor, (isActive || isHover) ? [1, 1, 1] : color);
                 gl.uniform1f(uAlpha, 1.0);
                 gl.drawArrays(gl.TRIANGLES, this.offsets!.cylinder, this.offsets!.cylinderCount);
-                gl.drawArrays(gl.TRIANGLES, this.offsets!.cone, this.offsets!.coneCount);
+
+                if (type === 'arrow') {
+                    gl.drawArrays(gl.TRIANGLES, this.offsets!.cone, this.offsets!.coneCount);
+                } else if (type === 'scale_box') {
+                     // The cube geometry is centered. We need to move it to the tip (Y=0.6)
+                     // Re-use mPart calculation.
+                     // Scale box slightly ? (cube is 0.08 size)
+                     // Translate local Y by 0.6
+                     // mPart is the rotation matrix (Y->X or Y->Z or I). 
+                     // We need to apply translation BEFORE rotation (in local coords) OR modify mFinal.
+                     
+                     // Easier: mFinal is Model * RotPart.
+                     // Apply translation to mFinal? No.
+                     // Let's modify mPart to include the translation for the tip? 
+                     // No, mPart rotates.
+                     // We need a separate matrix for the tip box.
+                     
+                     // Let's create a matrix for the box at the tip.
+                     const mTip = new Float32Array(16);
+                     // Translate Y up by 0.6
+                     const mTrans = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0.6,0,1];
+                     // Combine: mPart * mTrans? 
+                     // mPart transforms (0,1,0) to Axis direction. 
+                     // So yes, mPart * mTrans.
+                     this.multiply(mTip, mPart, mTrans);
+                     this.multiply(mTip, mBase, mTip); // Apply base model transform
+                     
+                     gl.uniformMatrix4fv(uModel, false, mTip);
+                     gl.drawArrays(gl.TRIANGLES, this.offsets!.cube, this.offsets!.cubeCount);
+                }
              } 
              else if (type === 'ring') {
                  // Geometry is Ring on XY plane.
@@ -369,8 +398,7 @@ export class GizmoRenderer {
                 }
              }
              else if (type === 'cube') {
-                 // Render specific cube handle.
-                 // Offset it slightly to the side to be accessible
+                 // Render specific switch handle.
                  mPart[12] = 0.35; mPart[13] = 0.35; mPart[14] = 0.35; 
                  this.multiply(mFinal, mBase, mPart);
                  gl.uniformMatrix4fv(uModel, false, mFinal);
@@ -394,6 +422,16 @@ export class GizmoRenderer {
              draw('X', 'ring', [1, 0, 0]);
              draw('Y', 'ring', [0, 1, 0]);
              draw('Z', 'ring', [0, 0, 1]);
+        } else if (mode === 'scale') {
+             draw('VIEW', 'sphere', [1, 1, 1]);
+             // Planes for 2-axis scale? Use same as translate planes
+             draw('X', 'plane', [0, 1, 1]); 
+             draw('Y', 'plane', [1, 0, 1]); 
+             draw('Z', 'plane', [1, 1, 0]);
+             // Boxes
+             draw('X', 'scale_box', [1, 0, 0]);
+             draw('Y', 'scale_box', [0, 1, 0]);
+             draw('Z', 'scale_box', [0, 0, 1]);
         }
 
         if (showModeSwitch) {

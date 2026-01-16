@@ -9,6 +9,7 @@ import { BrushAPI } from '../services/brushService';
 import { StencilAPI } from '../services/stencilService';
 import { eventBus, Events } from '../services/eventBus';
 import { Gizmo } from './Gizmo';
+import { GizmoMode } from '../services/GizmoRenderer';
 
 // Add TypeScript definitions for React Three Fiber elements
 declare module 'react' {
@@ -153,15 +154,7 @@ const StencilPlane = forwardRef<THREE.Group, {
   const proxyRef = useRef<THREE.Group>(null!); 
   
   // Local state to toggle between translate and rotate for the Stencil
-  // Currently we hardcode toggle on click for demo or expose prop.
-  // The user requested 'rotate object mode'. We will assume a default 'rotate' capability
-  // if 'tool' is 'select' and we are editing the WHOLE stencil.
-  // But `tool` is 'select' (points) or 'loop'.
-  // We need a mode to move the WHOLE stencil vs moving points.
-  // Currently: `tool === 'select'` enables `CornerHandle`.
-  // If no point selected, we want to move the whole plane.
-  // Let's add a `gizmoMode` toggle. 
-  const [gizmoMode, setGizmoMode] = useState<'translate' | 'rotate'>('translate');
+  const [gizmoMode, setGizmoMode] = useState<GizmoMode>('translate');
 
   useImperativeHandle(ref, () => groupRef.current);
 
@@ -346,11 +339,12 @@ const StencilPlane = forwardRef<THREE.Group, {
      }
   };
   
-  // Toggle mode with keyboard 'R' for rotate, 'G' for grab/translate (Blender style)
+  // Toggle mode with keyboard 'R' for rotate, 'G' for grab/translate, 'S' for scale
   useEffect(() => {
      const handler = (e: KeyboardEvent) => {
          if (e.key.toLowerCase() === 'r') setGizmoMode('rotate');
          if (e.key.toLowerCase() === 'g') setGizmoMode('translate');
+         if (e.key.toLowerCase() === 's') setGizmoMode('scale');
      };
      window.addEventListener('keydown', handler);
      return () => window.removeEventListener('keydown', handler);
@@ -429,7 +423,7 @@ const StencilPlane = forwardRef<THREE.Group, {
          )}
       </group>
       
-      {/* Gizmo Logic: If point selected, target proxy (translate only). If NO point selected, target Group (Translate OR Rotate) */}
+      {/* Gizmo Logic: If point selected, target proxy (translate only). If NO point selected, target Group (Translate/Rotate/Scale) */}
       {editable && tool === 'select' && (
          <Gizmo 
            target={selectedPoint !== null ? proxyRef.current : groupRef.current}
@@ -437,6 +431,7 @@ const StencilPlane = forwardRef<THREE.Group, {
            onDragStart={() => onDragChange(true)}
            onDragEnd={() => onDragChange(false)}
            onDrag={handleGizmoDrag}
+           onModeChange={selectedPoint === null ? (m) => setGizmoMode(m) : undefined}
          />
       )}
     </>
