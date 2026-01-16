@@ -1,7 +1,7 @@
 
 import React, { useRef, useMemo, useEffect, useState, useCallback, useImperativeHandle, forwardRef, Suspense } from 'react';
 import { Canvas, useThree, useFrame, createPortal, ThreeEvent } from '@react-three/fiber';
-import { OrbitControls, Environment, useCursor, useTexture, Line, GizmoHelper, GizmoViewport } from '@react-three/drei';
+import { OrbitControls, Environment, useCursor, useTexture, Line, GizmoHelper, GizmoViewport, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
 import { BrushSettings, Layer, StencilSettings, AxisWidgetSettings, Vec3 } from '../types';
 import { TEXTURE_SIZE } from '../constants';
@@ -33,6 +33,8 @@ declare module 'react' {
       canvasTexture: any;
       instancedMesh: any;
       boxGeometry: any;
+      ringGeometry: any;
+      circleGeometry: any;
     }
   }
 }
@@ -167,16 +169,43 @@ const CurveOverlay = ({ points, onPointDown }: { points: Vec3[], onPointDown: (i
         return points.map((p, i) => {
              const isAnchor = i % 3 === 0;
              const pos = new THREE.Vector3(p.x, p.y, p.z).normalize().multiplyScalar(2.0 + 0.05);
+             
+             // Size Scaling: 1/3 of previous sizes (0.06 -> ~0.02, 0.04 -> ~0.013)
              return (
-                 <mesh 
+                 <Billboard 
                    key={i} 
                    position={pos} 
-                   onClick={(e) => e.stopPropagation()}
-                   onPointerDown={(e) => { e.stopPropagation(); onPointDown(i, e); }}
                  >
-                     <boxGeometry args={[isAnchor ? 0.08 : 0.05, isAnchor ? 0.08 : 0.05, isAnchor ? 0.08 : 0.05]} />
-                     <meshBasicMaterial color={isAnchor ? '#ffff00' : '#00ffff'} depthTest={false} />
-                 </mesh>
+                     {/* Visible Handle Geometry */}
+                     <mesh
+                       onClick={(e) => e.stopPropagation()}
+                       onPointerDown={(e) => { e.stopPropagation(); onPointDown(i, e); }}
+                       renderOrder={9999}
+                     >
+                        {isAnchor ? (
+                            // Anchor: Hollow Ring ("Circle Edge")
+                            <ringGeometry args={[0.018, 0.022, 32]} />
+                        ) : (
+                            // Tangent: Filled Dot
+                            <circleGeometry args={[0.012, 16]} />
+                        )}
+                        <meshBasicMaterial 
+                           color={isAnchor ? '#ffff00' : '#00ffff'} 
+                           depthTest={false} 
+                           transparent 
+                           side={THREE.DoubleSide}
+                        />
+                     </mesh>
+
+                     {/* Invisible Hit Area (Larger for usability) */}
+                     <mesh
+                        onClick={(e) => e.stopPropagation()}
+                        onPointerDown={(e) => { e.stopPropagation(); onPointDown(i, e); }}
+                        visible={false}
+                     >
+                        <circleGeometry args={[0.03, 16]} />
+                     </mesh>
+                 </Billboard>
              );
         });
     }, [points, onPointDown]);
@@ -195,9 +224,9 @@ const CurveOverlay = ({ points, onPointDown }: { points: Vec3[], onPointDown: (i
 
     return (
         <group>
-            {linePoints && <Line points={linePoints} color="white" lineWidth={2} depthTest={false} transparent opacity={0.8} />}
+            {linePoints && <Line points={linePoints} color="white" lineWidth={2} depthTest={false} transparent opacity={0.8} renderOrder={9998} />}
             {handles}
-            {controlLines.map((pts, i) => <Line key={`cl-${i}`} points={pts} color="#444" lineWidth={1} depthTest={false} transparent opacity={0.5} dashed />)}
+            {controlLines.map((pts, i) => <Line key={`cl-${i}`} points={pts} color="#444" lineWidth={1} depthTest={false} transparent opacity={0.5} dashed renderOrder={9998} />)}
         </group>
     );
 };
@@ -510,7 +539,7 @@ const StencilPlane = forwardRef<THREE.Group, {
 });
 
 // ... rest of Scene.tsx (ProjectionPreview, ProjectionBaker, PaintableMesh, Scene)
-// Copying previous content for context completion ...
+
 const ProjectionPreview = ({ stencil, stencilMeshRef, lutTexture, lutBounds }: { 
     stencil: StencilSettings, 
     stencilMeshRef: React.MutableRefObject<THREE.Group | null>,
