@@ -1,3 +1,4 @@
+
 import { StencilSettings } from '../types';
 import { TIP_LIBRARY } from '../constants';
 
@@ -12,7 +13,8 @@ export const StencilAPI = {
       mode: 'edit',
       tool: 'select',
       rowCuts: [0, 1], 
-      colCuts: [0, 1] 
+      colCuts: [0, 1],
+      cullBackfaces: true
     };
   },
 

@@ -10,9 +10,11 @@ export interface BrushSettings {
   spacing: number; // Distance between stamps (as ratio of brush size)
   strength: number; // Intensity multiplier/curve for the brush alpha
   isAirbrush: boolean; // Toggle for Airbrush mode
+  usePressure: boolean; // Toggle for Pen Pressure Sensitivity
   maskImage: string | null; // Base64 data URL for the brush tip shape
   textureMix: number; // 0 = Use Brush Color (Tint), 1 = Use Texture Color
   mode: 'paint' | 'erase' | 'curve';
+  curvePreviewMode: 'none' | 'stroke' | 'fill'; // Live preview mode for curve
   rotation: number;       // Base rotation in degrees
   rotationJitter: number; // Random rotation variation (0-1)
   positionJitter: number; // Random position scattering (0-1 relative to size)
@@ -42,6 +44,7 @@ export interface StencilSettings {
   tool: 'select' | 'loop'; // 'select' = Move points/mesh, 'loop' = Add subdivisions
   rowCuts: number[]; // Ordered normalized values (0..1) defining horizontal cuts
   colCuts: number[]; // Ordered normalized values (0..1) defining vertical cuts
+  cullBackfaces: boolean; // Prevent projection on surfaces facing away from stencil
 }
 
 export interface AxisWidgetSettings {

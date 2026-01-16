@@ -200,27 +200,43 @@ const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil,
       {/* Curve Specific Controls */}
       {brush.mode === 'curve' && (
         <div className="space-y-2 bg-neutral-800 p-2 rounded border border-neutral-700 border-l-4 border-l-purple-500">
-             <div className="flex justify-between items-center text-xs text-neutral-400 mb-2">
-                 <span className="font-bold text-purple-400">Curve Tools</span>
+             <div className="flex justify-between items-center text-xs text-neutral-400 mb-1">
+                 <span className="font-bold text-purple-400">Curve Actions (Bake)</span>
                  <span>{curvePointsCount} pts</span>
              </div>
              
-             <div className="flex gap-2">
+             <div className="flex gap-2 mb-2">
                  <button 
                     onClick={() => eventBus.emit(Events.CMD_CURVE_STROKE)}
                     className="flex-1 py-1.5 bg-neutral-700 hover:bg-neutral-600 rounded text-xs text-white border border-neutral-600"
                     disabled={curvePointsCount < 2}
                  >
-                    Stroke
+                    Apply Stroke
                  </button>
                  <button 
                     onClick={() => eventBus.emit(Events.CMD_CURVE_FILL)}
                     className="flex-1 py-1.5 bg-neutral-700 hover:bg-neutral-600 rounded text-xs text-white border border-neutral-600"
                     disabled={curvePointsCount < 3}
                  >
-                    Fill
+                    Apply Fill
                  </button>
              </div>
+             
+             <div className="flex justify-between items-center text-xs text-neutral-400 mb-1">
+                 <span className="font-bold">Live Preview</span>
+             </div>
+             <div className="flex bg-neutral-900 p-1 rounded border border-neutral-700 gap-1 mb-2">
+                 {['none', 'stroke', 'fill'].map((m) => (
+                     <button
+                        key={m}
+                        onClick={() => handleChange('curvePreviewMode', m)}
+                        className={`flex-1 py-1 rounded text-[10px] uppercase font-semibold ${brush.curvePreviewMode === m ? 'bg-purple-600 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+                     >
+                        {m}
+                     </button>
+                 ))}
+             </div>
+
              <button 
                 onClick={() => eventBus.emit(Events.CMD_CURVE_CLEAR)}
                 className="w-full py-1.5 bg-red-900/30 hover:bg-red-900/50 text-red-400 border border-red-900/50 rounded text-xs mt-1"
@@ -231,21 +247,33 @@ const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil,
       )}
 
       {/* Brush Mode (Std/Air) - Hide in Curve mode if desired, but curve stroke might use it */}
-      <div className="flex bg-neutral-800 p-1 rounded-lg border border-neutral-700">
-        <button
-          onClick={() => handleChange('isAirbrush', false)}
-          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded text-xs font-medium transition-colors ${!brush.isAirbrush ? 'bg-neutral-600 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200'}`}
-        >
-          <IconBrush className="w-4 h-4" />
-          Std
-        </button>
-        <button
-          onClick={() => handleChange('isAirbrush', true)}
-          className={`flex-1 flex items-center justify-center gap-2 py-2 rounded text-xs font-medium transition-colors ${brush.isAirbrush ? 'bg-blue-600 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200'}`}
-        >
-          <IconAirbrush className="w-4 h-4" />
-          Air
-        </button>
+      <div className="space-y-2">
+        <div className="flex justify-between items-center">
+             <label className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">Mode & Pressure</label>
+        </div>
+        <div className="flex bg-neutral-800 p-1 rounded-lg border border-neutral-700 gap-1">
+            <button
+              onClick={() => handleChange('isAirbrush', false)}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded text-[10px] font-medium transition-colors ${!brush.isAirbrush ? 'bg-neutral-600 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200'}`}
+            >
+              <IconBrush className="w-3 h-3" />
+              Std
+            </button>
+            <button
+              onClick={() => handleChange('isAirbrush', true)}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded text-[10px] font-medium transition-colors ${brush.isAirbrush ? 'bg-blue-600 text-white shadow-sm' : 'text-neutral-400 hover:text-neutral-200'}`}
+            >
+              <IconAirbrush className="w-3 h-3" />
+              Air
+            </button>
+            <button
+              onClick={() => handleChange('usePressure', !brush.usePressure)}
+              className={`flex-1 flex items-center justify-center gap-1 py-2 rounded text-[10px] font-medium transition-colors ${brush.usePressure ? 'bg-green-600 text-white shadow-sm' : 'text-neutral-500 hover:text-neutral-300'}`}
+              title="Toggle Pressure Sensitivity (Tablet)"
+            >
+              Pressure {brush.usePressure ? 'ON' : 'OFF'}
+            </button>
+        </div>
       </div>
 
       {/* Brush Mask/Tip */}
@@ -398,6 +426,18 @@ const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil,
           ))}
 
       </div>
+      
+      {/* Settings Section for Cull Backfaces */}
+      <div className="space-y-2 pt-2 border-t border-neutral-700">
+         <label className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">Options</label>
+         <button
+            onClick={() => handleStencilChange('cullBackfaces', !stencil.cullBackfaces)}
+            className={`w-full py-2 rounded text-[10px] font-bold uppercase transition-colors ${stencil.cullBackfaces ? 'bg-orange-600 text-white shadow-sm' : 'bg-neutral-800 text-neutral-400 border border-neutral-700'}`}
+            title="Prevent projection on back-facing surfaces"
+         >
+            Cull Backfaces {stencil.cullBackfaces ? '(ON)' : '(OFF)'}
+         </button>
+      </div>
     </>
   );
 
@@ -484,6 +524,16 @@ const Toolbar: React.FC<ToolbarProps> = ({ brush, setBrush, stencil, setStencil,
            onChange={(e) => handleStencilChange('opacity', parseFloat(e.target.value))}
            className="w-full h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-green-500"
         />
+      </div>
+      
+      <div className="space-y-2">
+         <button
+            onClick={() => handleStencilChange('cullBackfaces', !stencil.cullBackfaces)}
+            className={`w-full py-2 rounded text-[10px] font-bold uppercase transition-colors ${stencil.cullBackfaces ? 'bg-orange-600 text-white shadow-sm' : 'bg-neutral-800 text-neutral-400 border border-neutral-700'}`}
+            title="Prevent projection on back-facing surfaces"
+         >
+            Cull Backfaces {stencil.cullBackfaces ? '(ON)' : '(OFF)'}
+         </button>
       </div>
 
       <div className="bg-neutral-800 p-3 rounded border border-neutral-700 text-[10px] text-neutral-400 space-y-2">

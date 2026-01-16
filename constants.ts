@@ -38,9 +38,11 @@ export const INITIAL_BRUSH = {
   spacing: 0.1, 
   strength: 1.0, 
   isAirbrush: false,
+  usePressure: true,
   maskImage: null as string | null,
   textureMix: 0,
   mode: 'paint' as const,
+  curvePreviewMode: 'stroke' as const,
   rotation: 0,
   rotationJitter: 0,
   positionJitter: 0
@@ -60,6 +62,7 @@ export const DEFAULT_PRESETS: BrushPreset[] = [
       opacity: 1.0,
       spacing: 0.1,
       isAirbrush: false,
+      usePressure: true,
       maskImage: null,
       textureMix: 0,
       mode: 'paint',
@@ -77,6 +80,7 @@ export const DEFAULT_PRESETS: BrushPreset[] = [
       opacity: 0.5,
       spacing: 0.1,
       isAirbrush: true,
+      usePressure: true,
       maskImage: null,
       textureMix: 0,
       mode: 'paint'
@@ -92,6 +96,7 @@ export const DEFAULT_PRESETS: BrushPreset[] = [
       opacity: 1.0,
       spacing: 0.25, 
       isAirbrush: false,
+      usePressure: true,
       maskImage: BRUSH_MASKS.SPLATTER,
       textureMix: 0,
       mode: 'paint',
@@ -111,6 +116,7 @@ export const DEFAULT_PRESETS: BrushPreset[] = [
       spacing: 0.15,
       strength: 1.2,
       isAirbrush: false,
+      usePressure: true,
       maskImage: BRUSH_MASKS.GRUNGE,
       textureMix: 0,
       mode: 'paint',
@@ -128,6 +134,7 @@ export const DEFAULT_PRESETS: BrushPreset[] = [
       spacing: 0.2,
       strength: 1.0,
       isAirbrush: false,
+      usePressure: false,
       maskImage: BRUSH_MASKS.NEBULA,
       textureMix: 1.0,
       mode: 'paint'
@@ -143,6 +150,7 @@ export const DEFAULT_PRESETS: BrushPreset[] = [
       opacity: 1.0,
       spacing: 0.25,
       isAirbrush: false,
+      usePressure: false,
       maskImage: BRUSH_MASKS.RAINBOW,
       textureMix: 1.0, // Fully colored
       mode: 'paint'

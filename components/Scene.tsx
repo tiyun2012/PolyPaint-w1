@@ -460,9 +460,15 @@ const ProjectionPreview = ({ stencil, stencilMeshRef, lutTexture, lutBounds }: {
        stencilMeshRef.current.updateMatrixWorld();
        const inverse = stencilMeshRef.current.matrixWorld.clone().invert();
        shaderRef.current.uniforms.stencilInverseMatrix.value.copy(inverse);
+       
+       // Calculate World Direction for Culling
+       const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(stencilMeshRef.current.quaternion).normalize();
+       shaderRef.current.uniforms.stencilDir.value.copy(forward);
+
        shaderRef.current.uniforms.opacity.value = stencil.opacity;
        shaderRef.current.uniforms.lutTexture.value = lutTexture;
        shaderRef.current.uniforms.lutBounds.value.copy(lutBounds);
+       shaderRef.current.uniforms.cullBackfaces.value = stencil.cullBackfaces;
     }
   });
 
@@ -472,34 +478,51 @@ const ProjectionPreview = ({ stencil, stencilMeshRef, lutTexture, lutBounds }: {
        lutTexture: { value: null },
        lutBounds: { value: new THREE.Vector4() },
        stencilInverseMatrix: { value: new THREE.Matrix4() },
-       opacity: { value: stencil.opacity }
+       stencilDir: { value: new THREE.Vector3(0,0,1) },
+       opacity: { value: stencil.opacity },
+       cullBackfaces: { value: true }
     },
     vertexShader: `
       varying vec3 vWorldPos;
+      varying vec3 vNormal;
       void main() {
         vec4 worldPosition = modelMatrix * vec4(position, 1.0);
         vWorldPos = worldPosition.xyz;
+        vNormal = normalize(normalMatrix * normal);
         gl_Position = projectionMatrix * viewMatrix * worldPosition;
       }
     `,
     fragmentShader: `
       uniform sampler2D stencilTexture;
       uniform sampler2D lutTexture;
-      uniform vec4 lutBounds; // MinX, MinY, Width, Height
+      uniform vec4 lutBounds;
       uniform mat4 stencilInverseMatrix;
+      uniform vec3 stencilDir;
       uniform float opacity;
+      uniform bool cullBackfaces;
       varying vec3 vWorldPos;
+      varying vec3 vNormal;
       
       void main() {
+         // Backface Culling: If normal points same direction as stencil (both +Z), it's backface
+         if (cullBackfaces) {
+             if (dot(vNormal, stencilDir) > 0.0) discard;
+         }
+
          vec4 localPos = stencilInverseMatrix * vec4(vWorldPos, 1.0);
          vec2 lutUV = (localPos.xy - lutBounds.xy) / lutBounds.zw;
+         
          if (lutUV.x < 0.0 || lutUV.x > 1.0 || lutUV.y < 0.0 || lutUV.y > 1.0) discard;
+         
          vec4 stencilMap = texture2D(lutTexture, lutUV);
          if (stencilMap.a < 0.5) discard;
+         
          vec2 uv = stencilMap.xy;
          if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
+         
          vec4 color = texture2D(stencilTexture, uv);
          if (color.a < 0.01) discard;
+         
          gl_FragColor = vec4(color.rgb, color.a * opacity);
       }
     `,
@@ -538,14 +561,18 @@ const ProjectionBaker = forwardRef<ProjectionBakerHandle, any>(({ stencil, meshG
            lutTexture: { value: null },
            lutBounds: { value: new THREE.Vector4() },
            stencilInverseMatrix: { value: new THREE.Matrix4() },
-           opacity: { value: 1.0 }
+           stencilDir: { value: new THREE.Vector3(0,0,1) },
+           opacity: { value: 1.0 },
+           cullBackfaces: { value: true }
         },
         vertexShader: `
           varying vec3 vWorldPos;
+          varying vec3 vNormal;
           void main() {
             vec2 clipSpace = uv * 2.0 - 1.0;
             gl_Position = vec4(clipSpace, 0.0, 1.0);
             vWorldPos = position; 
+            vNormal = normalize(normal); 
           }
         `,
         fragmentShader: `
@@ -553,19 +580,38 @@ const ProjectionBaker = forwardRef<ProjectionBakerHandle, any>(({ stencil, meshG
           uniform sampler2D lutTexture;
           uniform vec4 lutBounds;
           uniform mat4 stencilInverseMatrix;
+          uniform vec3 stencilDir;
           uniform float opacity;
+          uniform bool cullBackfaces;
           varying vec3 vWorldPos;
+          varying vec3 vNormal;
           
           void main() {
+             if (cullBackfaces) {
+                 // Check World Space dot product
+                 // Note: vNormal here is model-space normal if not transformed.
+                 // But in baker, we pass 'position' and 'normal' from mesh geometry.
+                 // Is vNormal World Space? NO. It is Local Space of the mesh being painted.
+                 // However, PaintableMesh is usually at (0,0,0) with identity rotation.
+                 // If the mesh was rotated, we'd need to multiply vNormal by modelMatrix.
+                 // Assuming standard Sphere at identity transform for now.
+                 if (dot(vNormal, stencilDir) > 0.0) discard;
+             }
+
              vec4 localPos = stencilInverseMatrix * vec4(vWorldPos, 1.0);
              vec2 lutUV = (localPos.xy - lutBounds.xy) / lutBounds.zw;
+             
              if (lutUV.x < 0.0 || lutUV.x > 1.0 || lutUV.y < 0.0 || lutUV.y > 1.0) discard;
+             
              vec4 stencilMap = texture2D(lutTexture, lutUV);
              if (stencilMap.a < 0.5) discard;
+             
              vec2 uv = stencilMap.xy;
              if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
+             
              vec4 color = texture2D(stencilTexture, uv);
              if (color.a < 0.1) discard;
+             
              gl_FragColor = vec4(color.rgb, color.a * opacity);
           }
         `,
@@ -580,11 +626,17 @@ const ProjectionBaker = forwardRef<ProjectionBakerHandle, any>(({ stencil, meshG
      const stencilMesh = stencilObjectRef.current;
      stencilMesh.updateMatrixWorld();
      const inverseMatrix = stencilMesh.matrixWorld.clone().invert();
+     
+     // Calculate World Direction for Culling
+     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(stencilMesh.quaternion).normalize();
+
      bakeMaterial.uniforms.stencilTexture.value = stencilTexture;
      bakeMaterial.uniforms.lutTexture.value = lutTexture;
      bakeMaterial.uniforms.lutBounds.value.copy(lutBounds);
      bakeMaterial.uniforms.stencilInverseMatrix.value = inverseMatrix;
+     bakeMaterial.uniforms.stencilDir.value.copy(forward);
      bakeMaterial.uniforms.opacity.value = stencil.opacity;
+     bakeMaterial.uniforms.cullBackfaces.value = stencil.cullBackfaces;
      
      const bakeMesh = new THREE.Mesh(meshGeometry, bakeMaterial);
      scene.add(bakeMesh);
@@ -619,6 +671,9 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
   const stencilMeshRef = useRef<THREE.Group>(null);
   const bakerRef = useRef<ProjectionBakerHandle>(null);
   
+  // Raycaster for robust curve projection
+  const raycaster = useMemo(() => new THREE.Raycaster(), []);
+
   // Curve Drag State
   const [draggingCurveIdx, setDraggingCurveIdx] = useState<number | null>(null);
 
@@ -708,8 +763,8 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
     };
     
     // Curve Rasterization
-    const handleCurveStroke = () => bakeCurve('stroke');
-    const handleCurveFill = () => bakeCurve('fill');
+    const handleCurveStroke = () => renderCurve('stroke', layers.find(l => l.id === activeLayerId)?.ctx);
+    const handleCurveFill = () => renderCurve('fill', layers.find(l => l.id === activeLayerId)?.ctx);
 
     const unsubBake = eventBus.on(Events.REQ_BAKE_PROJECTION, handleBakeRequest);
     const unsubStroke = eventBus.on(Events.CMD_CURVE_STROKE, handleCurveStroke);
@@ -719,14 +774,19 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
     return () => { unsubBake(); unsubStroke(); unsubFill(); unsubComp(); };
   }, [layers, curvePoints, activeLayerId]); 
 
-  // Curve Baking Logic
-  const bakeCurve = useCallback((type: 'stroke' | 'fill') => {
-      if (!curvePoints || curvePoints.length < 2) return;
-      const layer = layers.find(l => l.id === activeLayerId);
-      if (!layer) return;
+  // Create a separate Preview Canvas for Live Curve Preview
+  const previewCanvas = useMemo(() => {
+      const cvs = document.createElement('canvas');
+      cvs.width = TEXTURE_SIZE;
+      cvs.height = TEXTURE_SIZE;
+      return cvs;
+  }, []);
 
+  const renderCurve = useCallback((type: 'stroke' | 'fill' | 'none', targetCtx?: CanvasRenderingContext2D | null) => {
+      if (!curvePoints || curvePoints.length < 2 || type === 'none' || !targetCtx || !meshRef.current) return;
+      
       const path = new THREE.CurvePath<THREE.Vector3>();
-      const offset = 0.0; // Bake directly on surface
+      const offset = 0.5; // Offset start points further out to ensure raycast hits top surface
       const project = (v: Vec3) => new THREE.Vector3(v.x, v.y, v.z).normalize().multiplyScalar(2.0 + offset);
 
       for (let i = 0; i < curvePoints.length - 3; i += 3) {
@@ -741,43 +801,70 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
       const subdivisions = Math.max(200, path.curves.length * 50);
       const points = path.getPoints(subdivisions);
 
-      const toUV = (n: THREE.Vector3) => {
-          // Normal is position normalized
-          const norm = n.clone().normalize();
-          const u = 0.5 + Math.atan2(norm.z, norm.x) / (2 * Math.PI);
-          const v = 0.5 + Math.asin(norm.y) / Math.PI;
-          return new THREE.Vector2(u, v);
-      };
-
       if (type === 'stroke') {
-          // Reuse paintStroke logic but force single stamp
-          points.forEach(p => {
-              const uv = toUV(p);
-              paintStroke(uv, true); // true = force single stamp logic? Actually paintStroke handles logic.
-              // We need to simulate a continuous stroke. 
-              // paintStroke uses accumulation logic. 
-              // We can reset accumulator and call paintStroke sequentially.
-          });
-          // Reset stroke state
+          // Temporarily store original state to avoid side effects on manual painting
+          const prevLastUV = lastUVRef.current;
+          const prevDist = distanceAccumulatorRef.current;
+          
           lastUVRef.current = null;
           distanceAccumulatorRef.current = 0;
-      } else {
-          // Fill
-          const uvPoints = points.map(toUV);
-          layer.ctx.fillStyle = brush.color;
-          layer.ctx.globalAlpha = brush.opacity;
-          layer.ctx.globalCompositeOperation = 'source-over';
-          layer.ctx.beginPath();
-          layer.ctx.moveTo(uvPoints[0].x * TEXTURE_SIZE, (1 - uvPoints[0].y) * TEXTURE_SIZE);
-          for(let i=1; i<uvPoints.length; i++) {
-              layer.ctx.lineTo(uvPoints[i].x * TEXTURE_SIZE, (1 - uvPoints[i].y) * TEXTURE_SIZE);
-          }
-          layer.ctx.closePath();
-          layer.ctx.fill();
-          compositeDirtyRef.current = true;
-      }
 
-  }, [curvePoints, activeLayerId, layers, brush]);
+          points.forEach(p => {
+              // Robust Projection: Raycast from outer point towards center/mesh to find exact surface UV
+              const dir = p.clone().negate().normalize();
+              raycaster.set(p, dir);
+              const intersects = raycaster.intersectObject(meshRef.current!, false);
+              
+              if (intersects.length > 0) {
+                  const uv = intersects[0].uv;
+                  if (uv) paintStroke(uv, 1.0, true, targetCtx);
+              }
+          });
+
+          // Restore state
+          lastUVRef.current = prevLastUV;
+          distanceAccumulatorRef.current = prevDist;
+      } else {
+          // Fill: Collect UVs first via Raycast
+          const uvPoints: THREE.Vector2[] = [];
+          
+          points.forEach(p => {
+              const dir = p.clone().negate().normalize();
+              raycaster.set(p, dir);
+              const intersects = raycaster.intersectObject(meshRef.current!, false);
+              if (intersects.length > 0 && intersects[0].uv) {
+                  uvPoints.push(intersects[0].uv);
+              }
+          });
+          
+          if (uvPoints.length > 2) {
+            targetCtx.fillStyle = brush.color;
+            targetCtx.globalAlpha = brush.opacity;
+            targetCtx.globalCompositeOperation = 'source-over';
+            targetCtx.beginPath();
+            targetCtx.moveTo(uvPoints[0].x * TEXTURE_SIZE, (1 - uvPoints[0].y) * TEXTURE_SIZE);
+            for(let i=1; i<uvPoints.length; i++) {
+                targetCtx.lineTo(uvPoints[i].x * TEXTURE_SIZE, (1 - uvPoints[i].y) * TEXTURE_SIZE);
+            }
+            targetCtx.closePath();
+            targetCtx.fill();
+          }
+      }
+      compositeDirtyRef.current = true;
+  }, [curvePoints, brush]);
+
+  // Live Curve Preview Effect
+  useEffect(() => {
+     // Clear preview canvas first
+     const ctx = previewCanvas.getContext('2d');
+     if(ctx) ctx.clearRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+
+     if (brush.mode === 'curve' && brush.curvePreviewMode !== 'none') {
+         renderCurve(brush.curvePreviewMode, ctx);
+     } else {
+         compositeDirtyRef.current = true; // Ensure clearing if mode changed to none
+     }
+  }, [curvePoints, brush.curvePreviewMode, brush.size, brush.color, brush.opacity, brush.maskImage, brush.spacing, renderCurve]);
 
   useEffect(() => { compositeDirtyRef.current = true; }, [layers]);
 
@@ -807,6 +894,13 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
                 ctx.drawImage(layer.canvas, 0, 0);
               }
             });
+            
+            // Composite Curve Preview on top
+            if (brush.mode === 'curve' && brush.curvePreviewMode !== 'none') {
+                ctx.globalAlpha = 1.0; 
+                ctx.drawImage(previewCanvas, 0, 0);
+            }
+
             compositeTexture.needsUpdate = true;
         }
         compositeDirtyRef.current = false;
@@ -822,9 +916,17 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
      } else { maskCanvasRef.current = null; }
   }, [brush.maskImage]);
 
-  const drawStamp = useCallback((ctx: CanvasRenderingContext2D, x: number, y: number) => {
-      const size = brush.size;
-      const radius = size / 2;
+  const drawStamp = useCallback((ctx: CanvasRenderingContext2D, x: number, y: number, pressure: number = 1.0) => {
+      // Calculate dynamic size/opacity based on pressure if enabled
+      // If usePressure is false, we ignore the pressure arg (default 1.0)
+      const pFactor = brush.usePressure ? pressure : 1.0;
+      
+      // Heuristic: Pressure affects Size slightly (50%-100%) and Opacity/Flow heavily
+      const dynamicSize = brush.size * (brush.usePressure ? (0.5 + 0.5 * pFactor) : 1.0);
+      const dynamicOpacity = brush.opacity * (brush.usePressure ? Math.max(0.1, pFactor) : 1.0);
+      
+      const radius = dynamicSize / 2;
+      
       let posX = x;
       let posY = y;
       if (brush.positionJitter > 0) {
@@ -836,11 +938,14 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
       if (brush.rotationJitter > 0) {
          angle += (Math.random() - 0.5) * 2 * Math.PI * brush.rotationJitter;
       }
+      
       ctx.save();
       ctx.translate(posX, posY);
       ctx.rotate(angle);
       ctx.translate(-posX, -posY);
-      ctx.globalAlpha = brush.opacity * brush.flow;
+      
+      ctx.globalAlpha = dynamicOpacity * brush.flow;
+      
       if (brush.mode === 'erase') { ctx.globalCompositeOperation = 'destination-out'; } else { ctx.globalCompositeOperation = 'source-over'; }
       const drawX = posX - radius;
       const drawY = posY - radius;
@@ -849,22 +954,22 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
           if (brush.mode === 'paint') {
               if (!tintCanvasRef.current) tintCanvasRef.current = document.createElement('canvas');
               const tCvs = tintCanvasRef.current;
-              if (tCvs.width !== size || tCvs.height !== size) { tCvs.width = size; tCvs.height = size; }
+              if (tCvs.width !== dynamicSize || tCvs.height !== dynamicSize) { tCvs.width = dynamicSize; tCvs.height = dynamicSize; }
               const tCtx = tCvs.getContext('2d')!;
-              tCtx.clearRect(0, 0, size, size);
+              tCtx.clearRect(0, 0, dynamicSize, dynamicSize);
               tCtx.globalCompositeOperation = 'source-over';
               tCtx.fillStyle = brush.color;
-              tCtx.fillRect(0, 0, size, size);
+              tCtx.fillRect(0, 0, dynamicSize, dynamicSize);
               tCtx.globalCompositeOperation = 'destination-in';
-              tCtx.drawImage(mask, 0, 0, mask.width, mask.height, 0, 0, size, size);
+              tCtx.drawImage(mask, 0, 0, mask.width, mask.height, 0, 0, dynamicSize, dynamicSize);
               if (brush.textureMix > 0) {
                   tCtx.globalCompositeOperation = 'source-over';
                   tCtx.globalAlpha = brush.textureMix;
-                  tCtx.drawImage(mask, 0, 0, mask.width, mask.height, 0, 0, size, size);
+                  tCtx.drawImage(mask, 0, 0, mask.width, mask.height, 0, 0, dynamicSize, dynamicSize);
               }
-              ctx.drawImage(tCvs, drawX, drawY, size, size);
+              ctx.drawImage(tCvs, drawX, drawY, dynamicSize, dynamicSize);
           } else {
-              ctx.drawImage(mask, 0, 0, mask.width, mask.height, drawX, drawY, size, size);
+              ctx.drawImage(mask, 0, 0, mask.width, mask.height, drawX, drawY, dynamicSize, dynamicSize);
           }
       } else {
           if (brush.mode === 'paint') ctx.fillStyle = brush.color;
@@ -876,28 +981,40 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
       ctx.restore();
   }, [brush]);
   
-  const paintStroke = useCallback((uv: THREE.Vector2, force: boolean = false) => {
-     const layer = layers.find(l => l.id === activeLayerId);
-     if (!layer) return;
+  const paintStroke = useCallback((uv: THREE.Vector2, pressure: number = 1.0, force: boolean = false, targetCtx?: CanvasRenderingContext2D) => {
+     let ctx: CanvasRenderingContext2D | null = null;
+     if (targetCtx) {
+        ctx = targetCtx;
+     } else {
+        const layer = layers.find(l => l.id === activeLayerId);
+        if (layer) ctx = layer.ctx;
+     }
+
+     if (!ctx) return;
+
      const currentX = uv.x * TEXTURE_SIZE;
      const currentY = (1 - uv.y) * TEXTURE_SIZE;
      const currentVec = Vec2Utils.create(currentX, currentY);
+     
      if (!lastUVRef.current || force) {
-        drawStamp(layer.ctx, currentX, currentY);
+        drawStamp(ctx, currentX, currentY, pressure);
         lastUVRef.current = currentVec;
         compositeDirtyRef.current = true;
         return;
      }
+     
      const dist = Vec2Utils.distance(lastUVRef.current, currentVec);
-     const stepSize = Math.max(1, brush.size * brush.spacing);
+     const stepSize = Math.max(1, brush.size * brush.spacing); // Ensure stepSize is at least 1px to prevent freeze
+     
      distanceAccumulatorRef.current += dist;
+     
      while (distanceAccumulatorRef.current >= stepSize) {
         Vec2Utils.subtract(currentVec, lastUVRef.current!, TMP_VEC2_1);
         Vec2Utils.normalize(TMP_VEC2_1, TMP_VEC2_1);
         Vec2Utils.scale(TMP_VEC2_1, stepSize, TMP_VEC2_1);
         const nextPos = Vec2Utils.create(); 
         Vec2Utils.add(lastUVRef.current!, TMP_VEC2_1, nextPos);
-        drawStamp(layer.ctx, nextPos.x, nextPos.y);
+        drawStamp(ctx, nextPos.x, nextPos.y, pressure);
         lastUVRef.current = nextPos;
         distanceAccumulatorRef.current -= stepSize;
      }
@@ -924,7 +1041,13 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
         isPaintingRef.current = true;
         lastUVRef.current = null; 
         distanceAccumulatorRef.current = 0;
-        paintStroke(e.uv);
+        
+        // Extract pressure or default to 1.0
+        let p = e.nativeEvent.pressure;
+        if ((!p || p === 0) && e.nativeEvent.pointerType === 'mouse') p = 1.0;
+        if (p === 0) p = 1.0; // Fallback for devices reporting 0 on start
+
+        paintStroke(e.uv, p);
         (e.nativeEvent.target as HTMLElement).setPointerCapture(e.pointerId);
      }
   };
@@ -942,7 +1065,10 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
      }
 
      if (isPaintingRef.current && !isInteractingWithStencil && !isStencilEditMode && e.uv) {
-        paintStroke(e.uv);
+        let p = e.nativeEvent.pressure;
+        if ((!p || p === 0) && e.nativeEvent.pointerType === 'mouse') p = 1.0;
+        
+        paintStroke(e.uv, p);
      }
   };
 
@@ -971,7 +1097,7 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
         onPointerUp={handlePointerUp}
       >
         <sphereGeometry args={[2, 64, 64]} /> 
-        <meshStandardMaterial map={compositeTexture} roughness={0.5} metalness={0.1} transparent={true} />
+        <meshStandardMaterial map={compositeTexture} roughness={0.5} metalness={0.1} transparent={true} side={THREE.DoubleSide} />
       </mesh>
 
       {/* Curve Overlay */}
