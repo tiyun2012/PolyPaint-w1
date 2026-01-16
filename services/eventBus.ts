@@ -36,6 +36,10 @@ export const Events = {
   
   // Updates (State/Scene -> UI/Renderer)
   REFRESH_COMPOSITE: 'refresh_composite',
+
+  // Paint Actions (Bridging UI/User Input to Logic)
+  PAINT_START: 'paint_start',
+  PAINT_END: 'paint_end',
 };
 
 export const eventBus = new EventBus();

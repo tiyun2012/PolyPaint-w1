@@ -1035,6 +1035,7 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
   const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
      if (isAltPressed) return;
      if (!isInteractingWithStencil && !isStencilEditMode && e.uv) {
+        eventBus.emit(Events.PAINT_START, { layerId: activeLayerId, tool: brush.mode, uv: e.uv });
         isPaintingRef.current = true;
         lastUVRef.current = null; // Reset stroke
         distanceAccumulatorRef.current = 0;
@@ -1051,6 +1052,9 @@ const PaintableMesh: React.FC<SceneProps & { setStencil?: (s: any) => void; isAl
   };
 
   const handlePointerUp = (e: ThreeEvent<PointerEvent>) => {
+     if (isPaintingRef.current) {
+        eventBus.emit(Events.PAINT_END, { layerId: activeLayerId });
+     }
      isPaintingRef.current = false;
      lastUVRef.current = null;
      try { (e.nativeEvent.target as HTMLElement).releasePointerCapture(e.pointerId); } catch(err){}
