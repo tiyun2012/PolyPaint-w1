@@ -56,6 +56,13 @@ export const Gizmo: React.FC<GizmoProps> = ({
             console.error("GizmoRenderer requires WebGL 2");
         }
     }
+    // Cleanup on unmount
+    return () => {
+        if (rendererRef.current) {
+            rendererRef.current.dispose();
+            rendererRef.current = null;
+        }
+    };
   }, [gl]);
 
   // Helper to get current transforms
@@ -168,8 +175,13 @@ export const Gizmo: React.FC<GizmoProps> = ({
                       if (t !== null) {
                           const hit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
                           Vec3Utils.copy(dragStartPoint.current, hit);
+                          
+                          if (mode === 'scale') {
+                             // Store initial distance from center for planar scale ratio
+                             dragStartPoint.current.x = Vec3Utils.distance(hit, pos);
+                          }
                       }
-                  } else if (hoverAxis === 'VIEW') { // Scale uniform
+                  } else if (hoverAxis === 'VIEW') { // Scale uniform (center sphere/cube)
                       const planeNormal = { x: camera.getWorldDirection(new THREE.Vector3()).x, y: camera.getWorldDirection(new THREE.Vector3()).y, z: camera.getWorldDirection(new THREE.Vector3()).z };
                       const t = RayUtils.intersectPlane(
                         { origin: rayOrigin, direction: rayDir },
@@ -178,8 +190,7 @@ export const Gizmo: React.FC<GizmoProps> = ({
                       if (t !== null) {
                           const hit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
                           dragStartPoint.current = hit;
-                          // Store distance to center for uniform scale ratio
-                          dragStartPoint.current.x = Vec3Utils.distance(hit, pos); // Hacky storage
+                          dragStartPoint.current.x = Vec3Utils.distance(hit, pos); 
                       }
                   }
               } else if (mode === 'rotate') {
@@ -260,21 +271,33 @@ export const Gizmo: React.FC<GizmoProps> = ({
                          const dist = closest.t2; 
                          const startDist = dragStartPoint.current.x;
                          
-                         // Sensitivity
                          const delta = (dist - startDist) * 1.0; 
                          const scaleFactor = 1 + delta; 
                          
-                         // Apply to specific axis
                          if (activeAxis === 'X') target.scale.set(startScale.x * scaleFactor, startScale.y, startScale.z);
                          if (activeAxis === 'Y') target.scale.set(startScale.x, startScale.y * scaleFactor, startScale.z);
                          if (activeAxis === 'Z') target.scale.set(startScale.x, startScale.y, startScale.z * scaleFactor);
                      }
                  } else if (activeAxis.length === 2) { // Plane Scale (2-axis)
-                     // Simple implementation: uniform scale on 2 axes based on mouse movement relative to center?
-                     // Or use plane intersection logic similar to translate but mapping to scale.
-                     // Let's use uniform scale logic for planes for now, typically planes scale the 2 axes.
+                     const planeNormal = getPlaneNormal(activeAxis, rot);
+                     const t = RayUtils.intersectPlane(
+                         { origin: rayOrigin, direction: rayDir }, 
+                         { normal: planeNormal, distance: -Vec3Utils.dot(pos, planeNormal) }
+                     );
                      
-                     // Not implemented for brevity, fallback to uniform
+                     if (t !== null) {
+                         const currentHit = Vec3Utils.scaleAndAdd(rayOrigin, rayDir, t, Vec3Utils.create());
+                         const currentDist = Vec3Utils.distance(currentHit, pos);
+                         const startDist = dragStartPoint.current.x; // stored in x
+                         
+                         if (startDist > 0) {
+                             const ratio = currentDist / startDist;
+                             
+                             if (activeAxis === 'YZ') target.scale.set(startScale.x, startScale.y * ratio, startScale.z * ratio);
+                             if (activeAxis === 'XZ') target.scale.set(startScale.x * ratio, startScale.y, startScale.z * ratio);
+                             if (activeAxis === 'XY') target.scale.set(startScale.x * ratio, startScale.y * ratio, startScale.z);
+                         }
+                     }
                  } else if (activeAxis === 'VIEW') { // Uniform
                      // Project onto view plane, get distance from center
                      const planeNormal = { x: camera.getWorldDirection(new THREE.Vector3()).x, y: camera.getWorldDirection(new THREE.Vector3()).y, z: camera.getWorldDirection(new THREE.Vector3()).z };
@@ -347,8 +370,13 @@ export const Gizmo: React.FC<GizmoProps> = ({
 
 
   const getHoverAxis = (ray: {origin:Vec3, direction:Vec3}, pos: Vec3, rot: THREE.Quaternion, scale: number, mode: string): GizmoHoverAxis => {
-      // 1. Check Center Sphere
-      if (RayUtils.intersectSphere(ray, pos, 0.1 * scale)) return 'VIEW';
+      // 1. Check Center Sphere/Cube
+      if (mode === 'scale') {
+          // Check for Center Cube (Switch Handle style geometry but at center)
+          if (RayUtils.intersectSphere(ray, pos, 0.1 * scale)) return 'VIEW'; // Simplified hit test
+      } else {
+          if (RayUtils.intersectSphere(ray, pos, 0.1 * scale)) return 'VIEW';
+      }
       
       // Check Switch Handle (Cube at 0.35, 0.35, 0.35 offset)
       if (onModeChange) {
