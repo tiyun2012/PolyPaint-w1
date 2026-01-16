@@ -29,9 +29,9 @@ export const TMP_VEC3_2 = { x: 0, y: 0, z: 0 };
 export const TMP_VEC3_3 = { x: 0, y: 0, z: 0 };
 export const TMP_VEC3_4 = { x: 0, y: 0, z: 0 };
 export const TMP_VEC2_1 = { x: 0, y: 0 };
-export const TMP_VEC2_2 = { x: 0, y: 0 }; // Restored from V1
+export const TMP_VEC2_2 = { x: 0, y: 0 }; 
 export const TMP_QUAT_1 = { x: 0, y: 0, z: 0, w: 1 };
-export const TMP_QUAT_2 = { x: 0, y: 0, z: 0, w: 1 }; // Restored from V1
+export const TMP_QUAT_2 = { x: 0, y: 0, z: 0, w: 1 };
 
 // ==========================================
 // 3. CONSTANTS
@@ -41,12 +41,12 @@ export const MathConstants = {
     DEG_TO_RAD: Math.PI / 180,
     RAD_TO_DEG: 180 / Math.PI,
     EPSILON: 1e-6,
-    EPSILON_SQ: 1e-12, // Restored
+    EPSILON_SQ: 1e-12,
     PI: Math.PI,
     TWO_PI: Math.PI * 2,
     HALF_PI: Math.PI / 2,
-    INV_PI: 1 / Math.PI, // Restored
-    INV_TWO_PI: 1 / (Math.PI * 2), // Restored
+    INV_PI: 1 / Math.PI,
+    INV_TWO_PI: 1 / (Math.PI * 2),
 };
 
 // ==========================================
@@ -64,12 +64,12 @@ export const Vec2Utils = {
     scale: (v: Vec2, s: number, out: Vec2): Vec2 => { out.x = v.x * s; out.y = v.y * s; return out; },
     
     distance: (a: Vec2, b: Vec2): number => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2),
-    distanceSquared: (a: Vec2, b: Vec2): number => (a.x - b.x) ** 2 + (a.y - b.y) ** 2, // Restored
+    distanceSquared: (a: Vec2, b: Vec2): number => (a.x - b.x) ** 2 + (a.y - b.y) ** 2,
     length: (v: Vec2): number => Math.sqrt(v.x * v.x + v.y * v.y),
-    lengthSquared: (v: Vec2): number => v.x * v.x + v.y * v.y, // Restored
+    lengthSquared: (v: Vec2): number => v.x * v.x + v.y * v.y,
     
     normalize: (v: Vec2, out: Vec2): Vec2 => {
-        const len = v.x * v.x + v.y * v.y; // Optimized (no sqrt for 0 check)
+        const len = v.x * v.x + v.y * v.y;
         if (len > 0) {
             const invLen = 1.0 / Math.sqrt(len);
             out.x = v.x * invLen;
@@ -81,7 +81,7 @@ export const Vec2Utils = {
     },
     
     dot: (a: Vec2, b: Vec2): number => a.x * b.x + a.y * b.y,
-    cross: (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x, // Restored
+    cross: (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x,
     
     lerp: (a: Vec2, b: Vec2, t: number, out: Vec2): Vec2 => {
         out.x = a.x + (b.x - a.x) * t;
@@ -89,7 +89,6 @@ export const Vec2Utils = {
         return out;
     },
 
-    // Restored Utils
     equals: (a: Vec2, b: Vec2, epsilon = MathConstants.EPSILON): boolean => 
         Math.abs(a.x - b.x) <= epsilon && Math.abs(a.y - b.y) <= epsilon,
 
@@ -127,7 +126,7 @@ export const Vec3Utils = {
         out.z = a.z + (b.z * s);
         return out;
     },
-    negate: (v: Vec3, out: Vec3): Vec3 => { // Added from V3 suggestion
+    negate: (v: Vec3, out: Vec3): Vec3 => {
         out.x = -v.x;
         out.y = -v.y;
         out.z = -v.z;
@@ -170,6 +169,23 @@ export const Vec3Utils = {
         out.z = a.z + (b.z - a.z) * t;
         return out;
     },
+    
+    // Project vector 'a' onto vector 'b'
+    projectOnVector: (a: Vec3, b: Vec3, out: Vec3): Vec3 => {
+        const denom = Vec3Utils.lengthSquared(b);
+        if (denom === 0) return Vec3Utils.set(out, 0, 0, 0);
+        const scalar = Vec3Utils.dot(a, b) / denom;
+        return Vec3Utils.scale(b, scalar, out);
+    },
+    
+    // Project point 'p' onto plane defined by 'normal' and 'constant' (dist from origin)
+    projectOnPlane: (p: Vec3, planeNormal: Vec3, planeDist: number, out: Vec3): Vec3 => {
+        const t = Vec3Utils.dot(p, planeNormal) + planeDist;
+        out.x = p.x - t * planeNormal.x;
+        out.y = p.y - t * planeNormal.y;
+        out.z = p.z - t * planeNormal.z;
+        return out;
+    },
 
     // Transformations
     transformMat4: (v: Vec3, m: Mat4, out: Vec3): Vec3 => {
@@ -182,10 +198,6 @@ export const Vec3Utils = {
         return out;
     },
 
-    /**
-     * Transforms a vector by a mat4, ignoring the translation component (w=0).
-     * Useful for normals and directions.
-     */
     transformMat4Normal: (v: Vec3, m: Mat4, out: Vec3): Vec3 => {
         const x = v.x, y = v.y, z = v.z;
         out.x = m[0] * x + m[4] * y + m[8] * z;
@@ -194,7 +206,7 @@ export const Vec3Utils = {
         return out;
     },
 
-    transformMat3: (v: Vec3, m: Mat3 | Mat4, out: Vec3): Vec3 => { // Restored from V1
+    transformMat3: (v: Vec3, m: Mat3 | Mat4, out: Vec3): Vec3 => { 
         const x = v.x, y = v.y, z = v.z;
         out.x = m[0] * x + m[3] * y + m[6] * z;
         out.y = m[1] * x + m[4] * y + m[7] * z;
@@ -215,27 +227,26 @@ export const Vec3Utils = {
         return out;
     },
     
-    // Restored Utils
     equals: (a: Vec3, b: Vec3, epsilon = MathConstants.EPSILON): boolean => 
         Math.abs(a.x - b.x) <= epsilon && 
         Math.abs(a.y - b.y) <= epsilon && 
         Math.abs(a.z - b.z) <= epsilon,
 
-    min: (a: Vec3, b: Vec3, out: Vec3): Vec3 => { // Restored
+    min: (a: Vec3, b: Vec3, out: Vec3): Vec3 => {
         out.x = Math.min(a.x, b.x);
         out.y = Math.min(a.y, b.y);
         out.z = Math.min(a.z, b.z);
         return out;
     },
     
-    max: (a: Vec3, b: Vec3, out: Vec3): Vec3 => { // Restored
+    max: (a: Vec3, b: Vec3, out: Vec3): Vec3 => {
         out.x = Math.max(a.x, b.x);
         out.y = Math.max(a.y, b.y);
         out.z = Math.max(a.z, b.z);
         return out;
     },
 
-    reflect: (incident: Vec3, normal: Vec3, out: Vec3): Vec3 => { // Restored
+    reflect: (incident: Vec3, normal: Vec3, out: Vec3): Vec3 => {
         const dot = incident.x * normal.x + incident.y * normal.y + incident.z * normal.z;
         out.x = incident.x - 2 * dot * normal.x;
         out.y = incident.y - 2 * dot * normal.y;
@@ -243,7 +254,7 @@ export const Vec3Utils = {
         return out;
     },
 
-    angle: (a: Vec3, b: Vec3): number => { // Restored
+    angle: (a: Vec3, b: Vec3): number => {
         const denominator = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z) *
                             Math.sqrt(b.x * b.x + b.y * b.y + b.z * b.z);
         if (denominator === 0) return 0;
@@ -281,7 +292,7 @@ export const QuatUtils = {
         return out;
     },
 
-    normalize: (q: Quat, out: Quat): Quat => { // Restored
+    normalize: (q: Quat, out: Quat): Quat => {
         const len = Math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
         if (len > 0) {
             const invLen = 1 / len;
@@ -295,7 +306,7 @@ export const QuatUtils = {
         return out;
     },
 
-    conjugate: (q: Quat, out: Quat): Quat => { // Restored
+    conjugate: (q: Quat, out: Quat): Quat => {
         out.x = -q.x;
         out.y = -q.y;
         out.z = -q.z;
@@ -340,29 +351,22 @@ export const QuatUtils = {
         return out;
     },
 
-    // NEW: Convert Quaternion to Euler Angles (XYZ)
     toEuler: (q: Quat, out: Vec3): Vec3 => {
         const x = q.x, y = q.y, z = q.z, w = q.w;
-        
-        // Pitch (X-axis rotation)
         const sinr_cosp = 2 * (w * x + y * z);
         const cosr_cosp = 1 - 2 * (x * x + y * y);
         out.x = Math.atan2(sinr_cosp, cosr_cosp);
 
-        // Yaw (Y-axis rotation)
         const sinp = 2 * (w * y - z * x);
-        if (Math.abs(sinp) >= 1) out.y = Math.sign(sinp) * Math.PI / 2; // use 90 degrees if out of range
+        if (Math.abs(sinp) >= 1) out.y = Math.sign(sinp) * Math.PI / 2;
         else out.y = Math.asin(sinp);
 
-        // Roll (Z-axis rotation)
         const siny_cosp = 2 * (w * z + x * y);
         const cosy_cosp = 1 - 2 * (y * y + z * z);
         out.z = Math.atan2(siny_cosp, cosy_cosp);
-
         return out;
     },
 
-    // Fixed: Uses Mat4 input for safety
     fromMat4: (m: Mat4, out: Quat): Quat => {
         const m00 = m[0], m01 = m[1], m02 = m[2];
         const m10 = m[4], m11 = m[5], m12 = m[6];
@@ -400,7 +404,6 @@ export const QuatUtils = {
     },
 
     fromEuler: (x: number, y: number, z: number, out: Quat): Quat => {
-        // Order YXZ
         const c1 = Math.cos(x / 2);
         const c2 = Math.cos(y / 2);
         const c3 = Math.cos(z / 2);
@@ -414,7 +417,7 @@ export const QuatUtils = {
         return out;
     },
 
-    lookRotation: (forward: Vec3, up: Vec3, out: Quat): Quat => { // Restored from V1
+    lookRotation: (forward: Vec3, up: Vec3, out: Quat): Quat => {
         Vec3Utils.normalize(forward, TMP_VEC3_1);
         Vec3Utils.normalize(up, TMP_VEC3_2);
         
@@ -457,6 +460,7 @@ export const QuatUtils = {
         return out;
     }
 };
+
 // ==========================================
 // 6.5. MATRIX 3x3 UTILITIES
 // ==========================================
@@ -479,7 +483,6 @@ export const Mat3Utils = {
         return out;
     },
 
-    // Extracts the top-left 3x3 from a Mat4
     fromMat4: (out: Mat3, a: Mat4): Mat3 => {
         out[0] = a[0]; out[1] = a[1]; out[2] = a[2];
         out[3] = a[4]; out[4] = a[5]; out[5] = a[6];
@@ -487,8 +490,6 @@ export const Mat3Utils = {
         return out;
     },
 
-    // Calculates the Normal Matrix (Inverse Transpose of top-left 3x3)
-    // Essential for correct lighting when non-uniform scaling is involved.
     normalFromMat4: (out: Mat3, a: Mat4): Mat3 | null => {
         const a00 = a[0], a01 = a[1], a02 = a[2];
         const a10 = a[4], a11 = a[5], a12 = a[6];
@@ -549,6 +550,7 @@ export const Mat3Utils = {
         return out;
     }
 };
+
 // ==========================================
 // 7. MATRIX 4x4 UTILITIES
 // ==========================================
@@ -613,6 +615,23 @@ export const Mat4Utils = {
         return out;
     },
 
+    decompose: (m: Mat4, pos: Vec3, rot: Quat, scale: Vec3): void => {
+        Mat4Utils.getTranslation(m, pos);
+        Mat4Utils.getScaling(m, scale);
+        
+        // Remove scaling from matrix to extract rotation
+        const sm = Mat4Utils.copy(TMP_MAT4_1, m);
+        const invSx = 1 / (scale.x || 1);
+        const invSy = 1 / (scale.y || 1);
+        const invSz = 1 / (scale.z || 1);
+        
+        sm[0] *= invSx; sm[1] *= invSx; sm[2] *= invSx;
+        sm[4] *= invSy; sm[5] *= invSy; sm[6] *= invSy;
+        sm[8] *= invSz; sm[9] *= invSz; sm[10] *= invSz;
+        
+        QuatUtils.fromMat4(sm, rot);
+    },
+
     invert: (a: Mat4, out: Mat4): Mat4 | null => {
         const a00 = a[0], a01 = a[1], a02 = a[2], a03 = a[3];
         const a10 = a[4], a11 = a[5], a12 = a[6], a13 = a[7];
@@ -652,7 +671,6 @@ export const Mat4Utils = {
         return out;
     },
 
-    // Fixed: Standard Perspective Projection
     perspective: (fovy: number, aspect: number, near: number, far: number, out: Mat4): Mat4 => {
         const f = 1.0 / Math.tan(fovy / 2);
         out.fill(0);
@@ -671,7 +689,7 @@ export const Mat4Utils = {
         return out;
     },
 
-    orthographic: (left: number, right: number, bottom: number, top: number, near: number, far: number, out: Mat4): Mat4 => { // Restored
+    orthographic: (left: number, right: number, bottom: number, top: number, near: number, far: number, out: Mat4): Mat4 => {
         const lr = 1 / (left - right);
         const bt = 1 / (bottom - top);
         const nf = 1 / (near - far);
@@ -686,7 +704,6 @@ export const Mat4Utils = {
         return out;
     },
 
-    // View Matrix (Inverse Transform)
     lookAt: (eye: Vec3, center: Vec3, up: Vec3, out: Mat4): Mat4 => {
         let eyex = eye.x, eyey = eye.y, eyez = eye.z;
         let upx = up.x, upy = up.y, upz = up.z;
@@ -722,7 +739,6 @@ export const Mat4Utils = {
         return out;
     },
 
-    // World Matrix (Points an object AT a target)
     targetTo: (eye: Vec3, target: Vec3, up: Vec3, out: Mat4): Mat4 => {
         const eyex = eye.x, eyey = eye.y, eyez = eye.z;
         const upx = up.x, upy = up.y, upz = up.z;
@@ -760,25 +776,25 @@ export const Mat4Utils = {
         return out;
     },
 
-    getTranslation: (m: Mat4, out: Vec3): Vec3 => { // Restored
+    getTranslation: (m: Mat4, out: Vec3): Vec3 => { 
         out.x = m[12]; out.y = m[13]; out.z = m[14];
         return out;
     },
     
-    getScaling: (m: Mat4, out: Vec3): Vec3 => { // Restored
+    getScaling: (m: Mat4, out: Vec3): Vec3 => { 
         out.x = Math.sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
         out.y = Math.sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]);
         out.z = Math.sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
         return out;
     },
 
-    fromTranslation: (v: Vec3, out: Mat4): Mat4 => { // Restored
+    fromTranslation: (v: Vec3, out: Mat4): Mat4 => { 
         Mat4Utils.identity(out);
         out[12] = v.x; out[13] = v.y; out[14] = v.z;
         return out;
     },
     
-    fromScaling: (v: Vec3, out: Mat4): Mat4 => { // Restored
+    fromScaling: (v: Vec3, out: Mat4): Mat4 => { 
         Mat4Utils.identity(out);
         out[0] = v.x; out[5] = v.y; out[10] = v.z;
         return out;
@@ -792,14 +808,12 @@ export const Mat4Utils = {
 export const RayUtils = {
     create: (): Ray => ({ origin: {x:0, y:0, z:0}, direction: {x:0, y:0, z:1} }),
     
-    // Optimized: No object allocations
     fromScreen: (x: number, y: number, width: number, height: number, invViewProj: Mat4, out: Ray) => {
         const ndcX = (x / width) * 2 - 1;
         const ndcY = 1 - (y / height) * 2;
         
-        // Use Global Temps to avoid allocating {x,y,z}
-        Vec3Utils.set(TMP_VEC3_1, ndcX, ndcY, -1); // Near
-        Vec3Utils.set(TMP_VEC3_2, ndcX, ndcY, 1);  // Far
+        Vec3Utils.set(TMP_VEC3_1, ndcX, ndcY, -1);
+        Vec3Utils.set(TMP_VEC3_2, ndcX, ndcY, 1);
         
         Vec3Utils.transformMat4(TMP_VEC3_1, invViewProj, TMP_VEC3_1);
         Vec3Utils.transformMat4(TMP_VEC3_2, invViewProj, TMP_VEC3_2);
@@ -846,7 +860,7 @@ export const RayUtils = {
         const u = f * Vec3Utils.dot(s, h);
         if (u < 0.0 || u > 1.0) return null;
 
-        const q = Vec3Utils.cross(s, edge1, TMP_VEC3_3); // Reuse temp 3
+        const q = Vec3Utils.cross(s, edge1, TMP_VEC3_3); 
         const v = f * Vec3Utils.dot(ray.direction, q);
         if (v < 0.0 || u + v > 1.0) return null;
 
@@ -876,7 +890,7 @@ export const RayUtils = {
         return t2 > 0 ? t2 : null;
     },
 
-    intersectPlane: (ray: Ray, plane: Plane): number | null => { // Restored
+    intersectPlane: (ray: Ray, plane: Plane): number | null => {
         const denom = Vec3Utils.dot(plane.normal, ray.direction);
         if (Math.abs(denom) < MathConstants.EPSILON) return null;
         const t = -(Vec3Utils.dot(plane.normal, ray.origin) + plane.distance) / denom;
@@ -918,6 +932,50 @@ export const RayUtils = {
         const diffZ = (v0.z + v10z * sc) - (rOrigin.z + rDir.z * tc);
         
         return Math.sqrt(diffX*diffX + diffY*diffY + diffZ*diffZ);
+    },
+
+    // NEW: Find closest point on an infinite line
+    closestPointToLine: (point: Vec3, lineOrigin: Vec3, lineDir: Vec3, out: Vec3): Vec3 => {
+        const lx = lineDir.x, ly = lineDir.y, lz = lineDir.z;
+        const l2 = lx*lx + ly*ly + lz*lz;
+        if (l2 === 0) return Vec3Utils.copy(out, lineOrigin);
+        
+        const dx = point.x - lineOrigin.x;
+        const dy = point.y - lineOrigin.y;
+        const dz = point.z - lineOrigin.z;
+        
+        const t = (dx*lx + dy*ly + dz*lz) / l2;
+        
+        out.x = lineOrigin.x + t * lx;
+        out.y = lineOrigin.y + t * ly;
+        out.z = lineOrigin.z + t * lz;
+        return out;
+    },
+
+    // NEW: Critical for Axis Dragging. 
+    // Finds the two closest points between two skew lines (Mouse Ray vs Gizmo Axis).
+    // Returns parameters t1 (mouse ray) and t2 (axis line).
+    closestPointsRayRay: (o1: Vec3, d1: Vec3, o2: Vec3, d2: Vec3): { t1: number, t2: number } | null => {
+        const EPS = 1e-6;
+        const a = Vec3Utils.dot(d1, d1);
+        const b = Vec3Utils.dot(d1, d2);
+        const c = Vec3Utils.dot(d2, d2);
+        
+        const d = a * c - b * b;
+        if (d < EPS) return null; // Parallel
+        
+        const rx = o1.x - o2.x;
+        const ry = o1.y - o2.y;
+        const rz = o1.z - o2.z;
+        const rVec = {x: rx, y: ry, z: rz}; 
+        
+        const e = Vec3Utils.dot(d1, rVec);
+        const f = Vec3Utils.dot(d2, rVec);
+        
+        const t1 = (b * f - c * e) / d;
+        const t2 = (a * f - b * e) / d;
+        
+        return { t1, t2 };
     }
 };
 
@@ -929,15 +987,15 @@ export const MathUtils = {
     clamp: (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value)),
     lerp: (a: number, b: number, t: number): number => a + (b - a) * t,
     inverseLerp: (a: number, b: number, value: number): number => (value - a) / (b - a),
-    remap: (value: number, fromMin: number, fromMax: number, toMin: number, toMax: number): number => { // Restored
+    remap: (value: number, fromMin: number, fromMax: number, toMin: number, toMax: number): number => { 
         return toMin + (value - fromMin) * (toMax - toMin) / (fromMax - fromMin);
     },
     degToRad: (deg: number): number => deg * MathConstants.DEG_TO_RAD,
     radToDeg: (rad: number): number => rad * MathConstants.RAD_TO_DEG,
     smoothStep: (t: number): number => t * t * (3 - 2 * t),
-    approximately: (a: number, b: number, epsilon = MathConstants.EPSILON): boolean => Math.abs(a - b) <= epsilon, // Restored
-    mod: (a: number, b: number): number => ((a % b) + b) % b, // Restored
-    lerpClamped: (a: number, b: number, t: number): number => a + (b - a) * MathUtils.clamp(t, 0, 1) // Restored
+    approximately: (a: number, b: number, epsilon = MathConstants.EPSILON): boolean => Math.abs(a - b) <= epsilon,
+    mod: (a: number, b: number): number => ((a % b) + b) % b,
+    lerpClamped: (a: number, b: number, t: number): number => a + (b - a) * MathUtils.clamp(t, 0, 1)
 };
 
 export const Random = {
@@ -949,7 +1007,7 @@ export const Random = {
         out.z = Random.float(min, max);
         return out;
     },
-    onSphere: (radius = 1, out: Vec3): Vec3 => { // Restored
+    onSphere: (radius = 1, out: Vec3): Vec3 => {
         const theta = Math.random() * MathConstants.TWO_PI;
         const phi = Math.acos(2 * Math.random() - 1);
         out.x = radius * Math.sin(phi) * Math.cos(theta);
@@ -957,7 +1015,7 @@ export const Random = {
         out.z = radius * Math.cos(phi);
         return out;
     },
-    inSphere: (radius = 1, out: Vec3): Vec3 => { // Restored
+    inSphere: (radius = 1, out: Vec3): Vec3 => { 
         Random.onSphere(radius, out);
         const scale = Math.random() ** (1/3);
         return Vec3Utils.scale(out, scale, out);
@@ -971,13 +1029,13 @@ export const Easing = {
     quadInOut: (t: number): number => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
     cubicIn: (t: number): number => t * t * t,
     cubicOut: (t: number): number => (--t) * t * t + 1,
-    cubicInOut: (t: number): number => t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1, // Restored
-    sineIn: (t: number): number => 1 - Math.cos(t * MathConstants.HALF_PI), // Restored
-    sineOut: (t: number): number => Math.sin(t * MathConstants.HALF_PI), // Restored
-    sineInOut: (t: number): number => -(Math.cos(MathConstants.PI * t) - 1) / 2, // Restored
-    expoIn: (t: number): number => t === 0 ? 0 : Math.pow(2, 10 * (t - 1)), // Restored
-    expoOut: (t: number): number => t === 1 ? 1 : 1 - Math.pow(2, -10 * t), // Restored
-    bounceOut: (t: number): number => { // Restored
+    cubicInOut: (t: number): number => t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1,
+    sineIn: (t: number): number => 1 - Math.cos(t * MathConstants.HALF_PI),
+    sineOut: (t: number): number => Math.sin(t * MathConstants.HALF_PI),
+    sineInOut: (t: number): number => -(Math.cos(MathConstants.PI * t) - 1) / 2,
+    expoIn: (t: number): number => t === 0 ? 0 : Math.pow(2, 10 * (t - 1)),
+    expoOut: (t: number): number => t === 1 ? 1 : 1 - Math.pow(2, -10 * t),
+    bounceOut: (t: number): number => {
         if (t < 1 / 2.75) {
             return 7.5625 * t * t;
         } else if (t < 2 / 2.75) {
@@ -1008,7 +1066,6 @@ export const AABBUtils = {
         out.max.x = -Infinity; out.max.y = -Infinity; out.max.z = -Infinity;
     },
 
-    // Merged both expand (for point) and expandAABB logic
     expandPoint: (out: AABB, p: Vec3): void => {
         out.min.x = Math.min(out.min.x, p.x);
         out.min.y = Math.min(out.min.y, p.y);
@@ -1018,7 +1075,6 @@ export const AABBUtils = {
         out.max.z = Math.max(out.max.z, p.z);
     },
 
-    // Union of two AABBs (Replaces expandAABB for better naming)
     union: (out: AABB, a: AABB, b: AABB): void => {
         out.min.x = Math.min(a.min.x, b.min.x);
         out.min.y = Math.min(a.min.y, b.min.y);
@@ -1028,21 +1084,21 @@ export const AABBUtils = {
         out.max.z = Math.max(a.max.z, b.max.z);
     },
 
-    center: (aabb: AABB, out: Vec3): Vec3 => { // Restored
+    center: (aabb: AABB, out: Vec3): Vec3 => { 
         out.x = (aabb.min.x + aabb.max.x) * 0.5;
         out.y = (aabb.min.y + aabb.max.y) * 0.5;
         out.z = (aabb.min.z + aabb.max.z) * 0.5;
         return out;
     },
     
-    size: (aabb: AABB, out: Vec3): Vec3 => { // Restored
+    size: (aabb: AABB, out: Vec3): Vec3 => { 
         out.x = aabb.max.x - aabb.min.x;
         out.y = aabb.max.y - aabb.min.y;
         out.z = aabb.max.z - aabb.min.z;
         return out;
     },
 
-    containsPoint: (aabb: AABB, point: Vec3): boolean => { // Restored
+    containsPoint: (aabb: AABB, point: Vec3): boolean => { 
         return (
             point.x >= aabb.min.x && point.x <= aabb.max.x &&
             point.y >= aabb.min.y && point.y <= aabb.max.y &&
@@ -1070,9 +1126,7 @@ export const AABBUtils = {
         return distSq;
     },
 
-    // Transform AABB by a matrix (Center/Extent optimization)
     transform: (out: AABB, a: AABB, m: Mat4): void => {
-        // 1. Get center and extents
         const cx = (a.max.x + a.min.x) * 0.5;
         const cy = (a.max.y + a.min.y) * 0.5;
         const cz = (a.max.z + a.min.z) * 0.5;
@@ -1080,17 +1134,14 @@ export const AABBUtils = {
         const ey = (a.max.y - a.min.y) * 0.5;
         const ez = (a.max.z - a.min.z) * 0.5;
 
-        // 2. Transform center
         const newCx = m[0]*cx + m[4]*cy + m[8]*cz + m[12];
         const newCy = m[1]*cx + m[5]*cy + m[9]*cz + m[13];
         const newCz = m[2]*cx + m[6]*cy + m[10]*cz + m[14];
 
-        // 3. Transform extents (absolute values)
         const newEx = Math.abs(m[0])*ex + Math.abs(m[4])*ey + Math.abs(m[8])*ez;
         const newEy = Math.abs(m[1])*ex + Math.abs(m[5])*ey + Math.abs(m[9])*ez;
         const newEz = Math.abs(m[2])*ex + Math.abs(m[6])*ey + Math.abs(m[10])*ez;
 
-        // 4. Reconstruct AABB
         out.min.x = newCx - newEx; out.min.y = newCy - newEy; out.min.z = newCz - newEz;
         out.max.x = newCx + newEx; out.max.y = newCy + newEy; out.max.z = newCz + newEz;
     }
@@ -1101,19 +1152,17 @@ export const AABBUtils = {
 // ==========================================
 
 export const GeometryUtils = {
-    // Initialize a blank frustum
     createFrustum: (): Frustum => ({
         planes: [
-            { normal: {x:0,y:0,z:0}, distance: 0 }, // Left
-            { normal: {x:0,y:0,z:0}, distance: 0 }, // Right
-            { normal: {x:0,y:0,z:0}, distance: 0 }, // Bottom
-            { normal: {x:0,y:0,z:0}, distance: 0 }, // Top
-            { normal: {x:0,y:0,z:0}, distance: 0 }, // Near
-            { normal: {x:0,y:0,z:0}, distance: 0 }  // Far
+            { normal: {x:0,y:0,z:0}, distance: 0 }, 
+            { normal: {x:0,y:0,z:0}, distance: 0 }, 
+            { normal: {x:0,y:0,z:0}, distance: 0 }, 
+            { normal: {x:0,y:0,z:0}, distance: 0 }, 
+            { normal: {x:0,y:0,z:0}, distance: 0 }, 
+            { normal: {x:0,y:0,z:0}, distance: 0 }  
         ]
     }),
 
-    // Update an EXISTING frustum from a ViewProjection matrix (Zero Alloc)
     updateFrustum: (frustum: Frustum, m: Mat4): void => {
         const p = frustum.planes;
         const m0=m[0], m1=m[1], m2=m[2], m3=m[3];
@@ -1138,7 +1187,6 @@ export const GeometryUtils = {
         set(5, m3 - m2, m7 - m6, m11 - m10, m15 - m14); // Far
     },
 
-    // Check if Sphere is in Frustum
     frustumContainsSphere: (frustum: Frustum, sphere: Sphere): boolean => {
         const p = frustum.planes;
         const cx = sphere.center.x;
@@ -1153,7 +1201,6 @@ export const GeometryUtils = {
         return true;
     },
     
-    // Check if AABB is in Frustum (p-vertex/n-vertex optimization)
     frustumIntersectsAABB: (frustum: Frustum, aabb: AABB): boolean => {
         const p = frustum.planes;
         
