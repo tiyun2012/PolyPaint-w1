@@ -39,7 +39,6 @@ export const BezierCurve: React.FC<BezierCurveProps> = ({ points, onPointDown })
              const isAnchor = i % 3 === 0;
              const pos = new THREE.Vector3(p.x, p.y, p.z).normalize().multiplyScalar(2.0 + 0.05);
              
-             // Size Scaling: 1/3 of original sizes (Original Anchor ~0.06 -> New ~0.02)
              return (
                  <Billboard 
                    key={i} 
@@ -55,8 +54,8 @@ export const BezierCurve: React.FC<BezierCurveProps> = ({ points, onPointDown })
                             // Anchor: Hollow Ring ("Circle Edge")
                             <ringGeometry args={[0.018, 0.022, 32]} />
                         ) : (
-                            // Tangent: Filled Dot
-                            <circleGeometry args={[0.012, 16]} />
+                            // Tangent: Filled Dot - Thinner/Smaller (0.012 -> 0.008)
+                            <circleGeometry args={[0.008, 16]} />
                         )}
                         <meshBasicMaterial 
                            color={isAnchor ? '#ffff00' : '#00ffff'} 
@@ -97,7 +96,7 @@ export const BezierCurve: React.FC<BezierCurveProps> = ({ points, onPointDown })
                 <Line 
                     points={linePoints} 
                     color="white" 
-                    lineWidth={0.8} // Thinner: 2.0 * 2/5 = 0.8
+                    lineWidth={0.8} 
                     depthTest={false} 
                     transparent 
                     opacity={0.8} 
@@ -109,7 +108,22 @@ export const BezierCurve: React.FC<BezierCurveProps> = ({ points, onPointDown })
                 />
             )}
             {handles}
-            {controlLines.map((pts, i) => <Line key={`cl-${i}`} points={pts} color="#444" lineWidth={1} depthTest={false} transparent opacity={0.5} dashed renderOrder={9998} />)}
+            {controlLines.map((pts, i) => (
+                <Line 
+                    key={`cl-${i}`} 
+                    points={pts} 
+                    color="#444" 
+                    lineWidth={0.5} 
+                    depthTest={false} 
+                    transparent 
+                    opacity={0.5} 
+                    dashed={true}
+                    dashScale={20}
+                    dashSize={0.1}
+                    gapSize={0.1}
+                    renderOrder={9998} 
+                />
+            ))}
         </group>
     );
 };
