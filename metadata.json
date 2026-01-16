@@ -1,0 +1,5 @@
+{
+  "name": "PolyPaintMain",
+  "description": "A high-performance 3D texture painting application with layer support and AI-powered texture generation using Gemini.",
+  "requestFramePermissions": []
+}
